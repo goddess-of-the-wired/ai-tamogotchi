@@ -24,9 +24,9 @@ You have six points total, up to three per trait. A point adds 0.10, capped at
 1.0. Set up to two habits. Plain `init` accepts all the rolls. The original
 one-command `init --name ... --priorities ...` still creates an all-rolled town.
 
-One world day lasts seven real hours, starting at founding. The runner applies
-elapsed days on restart and then waits for the next deadline. Towns created
-with earlier versions start their real-time schedule on their first default run.
+One world day lasts six real hours, starting at founding. The runner catches up
+after a restart, committing up to four scheduled days in a burst before a
+60-second pause. It keeps the backlog until all due days are committed.
 Press Ctrl+C to stop the runner. In another terminal, inspect the town:
 
 ```sh
@@ -96,8 +96,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 The characterization baseline is commit
-`ac7d8a80b95afa34021493f844be4af53af58ef5`. Scheduled turns still use seven-hour
-days at this milestone. The tests control time directly to check catch-up
+`ac7d8a80b95afa34021493f844be4af53af58ef5`. The tests control time directly to check six-hour boundaries and catch-up
 without waiting.
 
 For a manual smoke test and restore rehearsal, run this in a POSIX shell:
@@ -175,3 +174,55 @@ records at turn 5. To roll back, run the baseline CLI against a copy of the
 pre-upgrade snapshot. The outbox records pending events locally. This version
 does not publish them. Hashes cover versioned records encoded as sorted,
 compact UTF-8 JSON with the `glitch-event-v1` domain prefix and a null byte.
+
+## Verify six-hour clock migration
+
+`clock status` shows the clock policy, schedule anchor, next scheduled deadline,
+completed schedule slots, and latest committed simulation day. Timestamps are
+UTC Unix seconds. Manual `step` and `run --interval` advance the simulation
+day counter without consuming scheduled slots.
+
+An existing seven-hour save keeps its next deadline, even if overdue. Its
+six-hour schedule is anchored six hours before that deadline. For a save
+without a deadline, migration uses the migration time as the schedule anchor.
+Run `clock migrate` to apply the policy explicitly without advancing a day.
+The normal scheduler also applies the policy on its first use.
+
+To rehearse with an actual seven-hour save, run from the repository root:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  git archive --format=tar ed66fb2 > "$scratch/baseline.tar"
+  tar -xf "$scratch/baseline.tar" -C "$scratch"
+
+  python3 "$scratch/glitch.py" --db "$db" init --name Baseline --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$db" backup "$scratch/pre-clock.sqlite3"
+  python3 glitch.py --db "$db" clock status > "$scratch/before.json"
+  python3 glitch.py --db "$db" clock migrate > "$scratch/after.json"
+  python3 glitch.py --db "$db" clock migrate > "$scratch/repeated.json"
+  diff -u "$scratch/after.json" "$scratch/repeated.json"
+  python3 - "$scratch" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+before = json.loads((root / "before.json").read_text())
+after = json.loads((root / "after.json").read_text())
+assert before["migration_required"] and not after["migration_required"]
+assert before["next_turn_at"] == after["next_turn_at"]
+assert after["next_turn_at"] - after["genesis_at"] == 21600
+assert after["scheduled_days"] == after["last_committed_day"] == 0
+print("Clock migration rehearsal passed.")
+PY
+)
+```
+
+The automated suite checks exact boundaries, catch-up limits, competing runners,
+and retry after an interrupted turn. Run it with
+`python3 -m unittest discover -s tests -v`.

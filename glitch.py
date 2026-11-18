@@ -15,9 +15,11 @@ from event_store import Event, append_events, canonical_history, migrate
 from exploration import ensure_map, explore
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
+from world_clock import (
+    CATCH_UP_LIMIT, CATCH_UP_PAUSE_SECONDS, claim_due_day, clock_status, initialize_clock,
+)
 
 PRIORITIES = ("loyalty", "stability", "ambition", "curiosity", "generosity")
-WORLD_DAY_SECONDS = 7 * 60 * 60
 CONSEQUENTIAL_CHANCE = 0.25
 SCALAR_BUDGET = 6
 SCALAR_LIMIT = 3
@@ -240,26 +242,57 @@ def advance(world):
     return events
 
 
-def step(db, scheduled=False):
+def step(db, scheduled=False, *, now=None):
     db.execute("BEGIN IMMEDIATE")
     with db:
         world = load(db)
         if world is None:
             raise SystemExit("Initialize the town with the init command first.")
         if scheduled:
-            now = time.time()
-            if "next_turn_at" not in world:
-                world["next_turn_at"] = now + WORLD_DAY_SECONDS
-                save(db, world)
-            if world["next_turn_at"] > now:
-                return world["next_turn_at"] - now
-            world["next_turn_at"] += WORLD_DAY_SECONDS
+            current_time = time.time() if now is None else now
+            migrated = initialize_clock(world, current_time)
+            delay = claim_due_day(world, current_time)
+            if delay > 0:
+                if migrated:
+                    save(db, world)
+                return delay
         events = advance(world)
+        if "clock_policy_version" in world:
+            world["last_committed_day"] = world["turn"]
         save(db, world)
         append_events(db, world["residents"][0]["birth"]["id"], world["turn"], events)
     for event in events:
         print(f"Day {world['turn']}: {event.message}", flush=True)
     return 0
+
+
+def run_scheduled(db):
+    """Process a bounded burst, yielding between bursts during a backlog."""
+    print("World clock running. One world day every six hours.", flush=True)
+    while True:
+        for _ in range(CATCH_UP_LIMIT):
+            delay = step(db, scheduled=True)
+            if delay > 0:
+                due = datetime.fromtimestamp(time.time() + delay, tz=timezone.utc)
+                print(f"Next turn at {due:%Y-%m-%d %H:%M:%S UTC}.", flush=True)
+                time.sleep(delay)
+                break
+        else:
+            print(f"Processed {CATCH_UP_LIMIT} scheduled days. Pausing catch-up for "
+                  f"{CATCH_UP_PAUSE_SECONDS} seconds.", flush=True)
+            time.sleep(CATCH_UP_PAUSE_SECONDS)
+
+
+def inspect_clock(db, migrate_clock):
+    if migrate_clock:
+        db.execute("BEGIN IMMEDIATE")
+    with db:
+        world = load(db)
+        if world is None:
+            raise SystemExit("Initialize the town with the init command first.")
+        if migrate_clock and initialize_clock(world, time.time()):
+            save(db, world)
+        return clock_status(world)
 
 
 def positive(value):
@@ -304,6 +337,10 @@ def main():
     commands.add_parser("map", help="show the shared discovered world")
     turn = commands.add_parser("step", help="advance the town by a fixed number of days")
     turn.add_argument("--days", type=positive, default=1)
+    clock = commands.add_parser("clock", help="inspect or migrate the world clock")
+    clock_commands = clock.add_subparsers(dest="clock_command", required=True)
+    clock_commands.add_parser("status", help="show saved schedule metadata")
+    clock_commands.add_parser("migrate", help="adopt the six-hour policy without advancing a turn")
     run = commands.add_parser("run", help="advance continuously until interrupted")
     run.add_argument("--interval", type=positive, help="advance immediately and repeat at this many seconds for testing")
     args = parser.parse_args()
@@ -320,12 +357,18 @@ def main():
         print(f"Backup saved to {args.destination}")
         return
 
-    if args.command == "history" and args.json:
+    if (args.command == "history" and args.json) or (
+        args.command == "clock" and args.clock_command == "status"
+    ):
         database_uri = Path(args.db).resolve().as_uri() + "?mode=ro"
         with closing(sqlite3.connect(database_uri, uri=True)) as db:
-            if load(db) is None:
-                raise SystemExit("Initialize the town with the init command first.")
-            print(json.dumps(canonical_history(db), indent=2))
+            if args.command == "clock":
+                result = inspect_clock(db, migrate_clock=False)
+            else:
+                if load(db) is None:
+                    raise SystemExit("Initialize the town with the init command first.")
+                result = canonical_history(db)
+            print(json.dumps(result, indent=2))
         return
 
     with closing(sqlite3.connect(args.db)) as db:
@@ -367,23 +410,19 @@ def main():
                 raise SystemExit("Initialize the town with the init command first.")
             for day, message in db.execute("SELECT turn, message FROM events ORDER BY turn, position"):
                 print(f"Day {day}: {message}")
+        elif args.command == "clock":
+            print(json.dumps(inspect_clock(db, migrate_clock=True), indent=2))
         elif args.command == "step":
             for _ in range(args.days):
                 step(db)
         else:
             try:
                 if args.interval is None:
-                    print("World clock running. One world day every seven hours.", flush=True)
-                while True:
-                    if args.interval is not None:
+                    run_scheduled(db)
+                else:
+                    while True:
                         step(db)
                         time.sleep(args.interval)
-                    else:
-                        delay = step(db, scheduled=True)
-                        if delay > 0:
-                            due = datetime.fromtimestamp(time.time() + delay, tz=timezone.utc)
-                            print(f"Next turn at {due:%Y-%m-%d %H:%M:%S UTC}.", flush=True)
-                            time.sleep(delay)
             except KeyboardInterrupt:
                 print("\nTown paused.")
 
@@ -400,9 +439,9 @@ def found_town(db, player, sheet, args):
         resident["birth"]["traits"] = resident["traits"].copy()
     world = {
         "name": "Crossing", "seed": seed, "turn": 0,
-        "next_turn_at": time.time() + WORLD_DAY_SECONDS,
         "workshop": "open", "repair": 0, "residents": [player, mira, ivo],
     }
+    initialize_clock(world, time.time())
     ensure_map(world)
     save(db, world)
     birth_events = [

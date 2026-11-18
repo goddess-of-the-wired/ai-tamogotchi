@@ -78,7 +78,7 @@ class BaselineTests(SimulationFixture):
     def test_scheduled_turns_keep_deadlines_across_reopens(self):
         self.found_town()
         deadline = self.view("status")["next_turn_at"]
-        interval = 7 * 60 * 60
+        interval = 6 * 60 * 60
         with closing(sqlite3.connect(self.db)) as db:
             with patch("glitch.time.time", return_value=deadline - 1):
                 self.assertEqual(glitch.step(db, scheduled=True), 1)
