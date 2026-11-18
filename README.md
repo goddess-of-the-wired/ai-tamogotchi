@@ -8,7 +8,7 @@ can affect their savings, their relationship with Mira, and Ivo’s employment.
 
 ## Run it
 
-From this directory, with Python 3:
+From this directory, with Python 3.10 or newer:
 
 ```sh
 python3 glitch.py draft --name Alex --priorities loyalty generosity curiosity
@@ -85,3 +85,54 @@ along the explored frontier or revisit saved cells. Terrain is seeded by
 coordinates. Connected river cells share a feature ID. Each discovery
 records the first explorer and day. Existing towns begin with Crossing and
 expand on subsequent turns.
+
+## Test and rehearse recovery
+
+Use Python 3.10 or newer from the repository root. The test suite uses only the
+standard library and creates its own temporary databases.
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The characterization baseline is commit
+`ac7d8a80b95afa34021493f844be4af53af58ef5`. Scheduled turns still use seven-hour
+days at this milestone. The tests control time directly to check catch-up
+without waiting.
+
+For a manual smoke test and restore rehearsal, run this in a POSIX shell:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  source="$scratch/source.sqlite3"
+  restored="$scratch/restored.sqlite3"
+
+  python3 glitch.py --help
+  python3 glitch.py traits
+  python3 glitch.py --db "$source" draft --name Baseline --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$source" init
+  python3 glitch.py --db "$source" step --days 4
+  python3 glitch.py --db "$source" backup "$restored"
+
+  for command in status history map; do
+    python3 glitch.py --db "$source" "$command" > "$scratch/source-$command"
+    python3 glitch.py --db "$restored" "$command" > "$scratch/restored-$command"
+    diff -u "$scratch/source-$command" "$scratch/restored-$command"
+  done
+
+  python3 glitch.py --db "$restored" step
+  python3 glitch.py --db "$source" status | python3 -c 'import json, sys; assert json.load(sys.stdin)["turn"] == 4'
+  python3 glitch.py --db "$restored" status | python3 -c 'import json, sys; assert json.load(sys.stdin)["turn"] == 5'
+  echo "Restore rehearsal passed."
+)
+```
+
+A successful run prints no differences and ends with `Restore rehearsal passed.`
+The backup command uses SQLite's online backup API and checks the snapshot
+before publishing it. Choose a new destination on a filesystem that supports
+hard links. A snapshot includes private traits and seeds. Keep it private.
+Use a separate copy for experiments so you retain an unmodified recovery point.

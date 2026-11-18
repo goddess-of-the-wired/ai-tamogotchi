@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added SQLite snapshot backups, prototype regression tests, CI, and a manual recovery rehearsal.
 
 - Added shared terrain and persistent, personality-driven expeditions.
 - Added saved birth sheets, bounded point spending, and optional habit choices.

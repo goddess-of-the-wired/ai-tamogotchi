@@ -9,8 +9,10 @@ import time
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
+from pathlib import Path
 
 from exploration import ensure_map, explore
+from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
 
 PRIORITIES = ("loyalty", "stability", "ambition", "curiosity", "generosity")
@@ -275,6 +277,8 @@ def main():
         command.add_argument("--seed", help="reuse a seed to reproduce initial traits")
     init.add_argument("--spend", action="append", default=[], metavar="TRAIT=POINTS")
     init.add_argument("--habit", action="append", default=[], metavar="TRAIT=true|false")
+    backup = commands.add_parser("backup", help="save a consistent SQLite snapshot to a new file")
+    backup.add_argument("destination", type=Path)
     status = commands.add_parser("status", help="show current world state and visible traits")
     status.add_argument("--show-hidden", action="store_true", help="include private traits and seeds")
     commands.add_parser("traits", help="list global trait definitions")
@@ -288,6 +292,14 @@ def main():
 
     if args.command == "traits":
         print(json.dumps(TRAITS, indent=2))
+        return
+
+    if args.command == "backup":
+        try:
+            backup_database(Path(args.db), args.destination)
+        except (OSError, sqlite3.Error) as error:
+            parser.exit(1, f"Backup failed: {error}\n")
+        print(f"Backup saved to {args.destination}")
         return
 
     with closing(sqlite3.connect(args.db)) as db:
