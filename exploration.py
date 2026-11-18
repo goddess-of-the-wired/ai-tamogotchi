@@ -1,5 +1,6 @@
 """Shared, coordinate-based terrain and daily expeditions."""
 
+from dataclasses import dataclass
 from hashlib import sha256
 from random import Random
 
@@ -40,6 +41,15 @@ def ensure_map(world):
         world["map"] = {HOME: discover(world["seed"], 0, 0, 0)}
 
 
+@dataclass(frozen=True)
+class Expedition:
+    kind: str
+    message: str
+    resident: dict
+    site_id: str
+    effects: dict
+
+
 def explore(world, rng):
     residents = world["residents"]
     cells = world["map"]
@@ -71,6 +81,12 @@ def explore(world, rng):
     day = world["turn"]
     if not revisit:
         cells[identifier] = discover(world["seed"], x, y, day, origin["id"])
+    previous_expedition = resident.get("last_expedition")
     resident["last_expedition"] = {"day": day, "cell_id": identifier}
     verb = "revisits" if revisit else "discovers"
-    return f"{origin['name']} {verb} {cells[identifier]['terrain']} at ({x}, {y}) and returns home."
+    effects = {"last_expedition": [previous_expedition, resident["last_expedition"]]}
+    if not revisit:
+        effects["site"] = [None, cells[identifier]]
+    kind = "site.revisited" if revisit else "site.discovered"
+    message = f"{origin['name']} {verb} {cells[identifier]['terrain']} at ({x}, {y}) and returns home."
+    return Expedition(kind, message, resident, identifier, effects)

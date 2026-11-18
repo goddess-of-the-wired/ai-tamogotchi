@@ -11,6 +11,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from event_store import Event, append_events, canonical_history, migrate
 from exploration import ensure_map, explore
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
@@ -171,12 +172,18 @@ def advance(world):
     events = []
     player, mira, ivo = world["residents"]
 
+    def record(kind, message, actors, effects, *, site_id="cell:0:0", cause_type=None):
+        events.append(Event(kind, message, tuple(r["birth"]["id"] for r in actors),
+                            effects, site_id, cause_type))
+
     consequential = rng_for(world["seed"], f"consequential:{turn}").random() < CONSEQUENTIAL_CHANCE
     if world["workshop"] == "open" and consequential:
+        roles = {r["birth"]["id"]: [r["role"], "resident"] for r in (player, mira)}
         world["workshop"] = "closed"
         player["role"] = "resident"
         mira["role"] = "resident"
-        events.append("A broken drive shaft closes the workshop. Mira asks for help repairing it.")
+        record("workshop.closed", "A broken drive shaft closes the workshop. Mira asks for help repairing it.",
+               (mira, player), {"workshop": ["open", "closed"], "roles": roles})
 
     if world["workshop"] == "closed":
         origin = player["birth"]
@@ -187,36 +194,49 @@ def advance(world):
             + (1 + 4 * player["traits"]["courage"]) + player["trust"]
         )
         work_score = 4 + motives.get("stability", 0) + motives.get("ambition", 0)
+        before = {key: player[key] for key in ("savings", "trust", "role")}
+        repair_before = world["repair"]
         if player["savings"] >= 3 and help_score >= work_score:
             player["savings"] -= 3
             player["trust"] += 1
             player["role"] = "workshop hand"
             world["repair"] += 2
-            events.append(f"{name} spends 3 savings repairing the workshop with Mira. Trust grows.")
+            message = f"{name} spends 3 savings repairing the workshop with Mira. Trust grows."
         else:
             player["savings"] += 2
             player["role"] = "market courier"
-            events.append(f"{name} takes a market shift for 2 savings while Mira works on the repair.")
+            message = f"{name} takes a market shift for 2 savings while Mira works on the repair."
         world["repair"] += 1
+        effects = {key: [value, player[key]] for key, value in before.items()}
+        effects["repair"] = [repair_before, world["repair"]]
+        record("resident.savings_changed", message, (player, mira), effects,
+               cause_type="workshop.closed")
         if world["repair"] >= 4:
             world["workshop"] = "reopened"
+            role = mira["role"]
             mira["role"] = "mechanic"
-            events.append("Mira reopens the workshop and posts a paid apprenticeship.")
+            record("workshop.reopened", "Mira reopens the workshop and posts a paid apprenticeship.",
+                   (mira,), {"workshop": ["closed", "reopened"], "role": [role, mira["role"]]},
+                   cause_type="resident.savings_changed")
     elif world["workshop"] == "reopened" and ivo["role"] == "resident":
         ivo["role"] = "apprentice"
-        events.append("Ivo takes the apprenticeship created by the workshop repair.")
+        record("resident.job_assigned", "Ivo takes the apprenticeship created by the workshop repair.",
+               (ivo,), {"role": ["resident", "apprentice"]}, cause_type="workshop.reopened")
     else:
         worker = rng.choice([resident for resident in world["residents"] if resident["role"] != "resident"])
+        savings = worker["savings"]
         if consequential:
             worker["savings"] += 3
-            events.append(f"A traveling merchant pays {worker['birth']['name']} 3 for a rush order.")
+            message = f"A traveling merchant pays {worker['birth']['name']} 3 for a rush order."
         else:
             worker["savings"] += 1
-            events.append(f"{worker['birth']['name']} finishes a paid shift and saves 1.")
+            message = f"{worker['birth']['name']} finishes a paid shift and saves 1."
+        record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
 
     expedition = explore(world, rng_for(world["seed"], f"expedition:{turn}"))
     if expedition:
-        events.append(expedition)
+        record(expedition.kind, expedition.message, (expedition.resident,), expedition.effects,
+               site_id=expedition.site_id)
     return events
 
 
@@ -236,12 +256,9 @@ def step(db, scheduled=False):
             world["next_turn_at"] += WORLD_DAY_SECONDS
         events = advance(world)
         save(db, world)
-        db.executemany(
-            "INSERT INTO events (turn, position, message) VALUES (?, ?, ?)",
-            [(world["turn"], index, event) for index, event in enumerate(events)],
-        )
+        append_events(db, world["residents"][0]["birth"]["id"], world["turn"], events)
     for event in events:
-        print(f"Day {world['turn']}: {event}", flush=True)
+        print(f"Day {world['turn']}: {event.message}", flush=True)
     return 0
 
 
@@ -282,7 +299,8 @@ def main():
     status = commands.add_parser("status", help="show current world state and visible traits")
     status.add_argument("--show-hidden", action="store_true", help="include private traits and seeds")
     commands.add_parser("traits", help="list global trait definitions")
-    commands.add_parser("history", help="read the town chronicle")
+    history = commands.add_parser("history", help="read the town chronicle")
+    history.add_argument("--json", action="store_true", help="show structured events recorded after migration")
     commands.add_parser("map", help="show the shared discovered world")
     turn = commands.add_parser("step", help="advance the town by a fixed number of days")
     turn.add_argument("--days", type=positive, default=1)
@@ -302,13 +320,24 @@ def main():
         print(f"Backup saved to {args.destination}")
         return
 
+    if args.command == "history" and args.json:
+        database_uri = Path(args.db).resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(database_uri, uri=True)) as db:
+            if load(db) is None:
+                raise SystemExit("Initialize the town with the init command first.")
+            print(json.dumps(canonical_history(db), indent=2))
+        return
+
     with closing(sqlite3.connect(args.db)) as db:
+        db.execute("PRAGMA foreign_keys = ON")
         db.execute("CREATE TABLE IF NOT EXISTS world (id INTEGER PRIMARY KEY, state TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS birth_draft (id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
         db.execute("""CREATE TABLE IF NOT EXISTS events (
             turn INTEGER NOT NULL, position INTEGER NOT NULL, message TEXT NOT NULL,
             PRIMARY KEY (turn, position)
         )""")
+
+        migrate(db)
 
         if args.command in {"draft", "init"}:
             db.execute("BEGIN IMMEDIATE")
@@ -376,7 +405,16 @@ def found_town(db, player, sheet, args):
     }
     ensure_map(world)
     save(db, world)
-    db.execute("INSERT INTO events VALUES (0, 0, ?)", (f"{player['birth']['name']} arrives in Crossing.",))
+    birth_events = [
+        Event("resident.born", f"{player['birth']['name']} arrives in Crossing.",
+              tuple(r["birth"]["id"] for r in world["residents"]),
+              {"residents": [[], [
+                  {"id": r["birth"]["id"], "name": r["birth"]["name"],
+                   "savings": r["savings"], "role": r["role"]}
+                  for r in world["residents"]
+              ]]})
+    ]
+    append_events(db, player["birth"]["id"], 0, birth_events)
     db.execute("DELETE FROM birth_draft WHERE id = 1")
 
 

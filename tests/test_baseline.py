@@ -15,7 +15,7 @@ from exploration import discover
 CLI = Path(glitch.__file__)
 
 
-class BaselineTests(unittest.TestCase):
+class SimulationFixture(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -34,6 +34,8 @@ class BaselineTests(unittest.TestCase):
     def view(self, *args, database=None):
         return json.loads(self.command(*args, database=database).stdout)
 
+
+class BaselineTests(SimulationFixture):
     def test_birth_draft_can_reopen_and_preserves_choices(self):
         args = ("--name", "Baseline", "--seed", "test",
                 "--priorities", "loyalty", "generosity", "curiosity")

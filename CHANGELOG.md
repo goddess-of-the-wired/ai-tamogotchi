@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added versioned canonical events, causal links, a hash chain, and a transactional outbox alongside the prose chronicle.
 - Added SQLite snapshot backups, prototype regression tests, CI, and a manual recovery rehearsal.
 
 - Added shared terrain and persistent, personality-driven expeditions.

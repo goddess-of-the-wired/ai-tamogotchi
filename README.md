@@ -136,3 +136,42 @@ The backup command uses SQLite's online backup API and checks the snapshot
 before publishing it. Choose a new destination on a filesystem that supports
 hard links. A snapshot includes private traits and seeds. Keep it private.
 Use a separate copy for experiments so you retain an unmodified recovery point.
+
+## Verify structured history on an upgraded save
+
+`history` continues to print the prose chronicle. `history --json` shows
+canonical records ordered by turn and position. Existing prose stays intact.
+The first canonical event on an upgraded save is the first event committed
+after migration, and its `previous_hash` is null.
+
+To rehearse the upgrade with an actual pre-migration database, check out this
+version and run from the repository root in a POSIX shell:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  git archive --format=tar 17e6b6a > "$scratch/baseline.tar"
+  tar -xf "$scratch/baseline.tar" -C "$scratch"
+
+  python3 "$scratch/glitch.py" --db "$db" init --name Baseline --seed test \
+    --priorities loyalty generosity curiosity
+  python3 "$scratch/glitch.py" --db "$db" step --days 4
+  python3 "$scratch/glitch.py" --db "$db" backup "$scratch/pre-upgrade.sqlite3"
+  python3 "$scratch/glitch.py" --db "$db" history > "$scratch/before"
+
+  python3 glitch.py --db "$db" history > "$scratch/after"
+  diff -u "$scratch/before" "$scratch/after"
+  python3 glitch.py --db "$db" history --json
+  python3 glitch.py --db "$db" step
+  python3 glitch.py --db "$db" history --json
+)
+```
+
+Expect no prose differences, then an empty JSON array, then one or more
+records at turn 5. To roll back, run the baseline CLI against a copy of the
+pre-upgrade snapshot. The outbox records pending events locally. This version
+does not publish them. Hashes cover versioned records encoded as sorted,
+compact UTF-8 JSON with the `glitch-event-v1` domain prefix and a null byte.
