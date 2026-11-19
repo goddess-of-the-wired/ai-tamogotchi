@@ -1,6 +1,5 @@
 """Version-one virtual IPv4 geography. Addresses are game identifiers."""
 
-from collections import deque
 from ipaddress import IPv4Address, IPv4Network
 
 GRID_SIZE = 1 << 16
@@ -10,7 +9,6 @@ TOPOLOGY_VERSION = 1
 REGIONS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 GATEWAYS = tuple(str(IPv4Network(region).network_address) for region in REGIONS)
 EDGE_COST_QUARTERS = 1
-DAY_TRIP_EDGE_LIMIT = 4 // (2 * EDGE_COST_QUARTERS)
 
 INSCRIPTION = """This place is a message.
 
@@ -121,21 +119,3 @@ def validate_geography(world):
         MAPPING_VERSION, TOPOLOGY_VERSION,
     ):
         raise ValueError("Unsupported IPv4 geography version.")
-
-
-def day_trip_paths(known_sites):
-    """Find reachable known sites and one-edge frontiers within a round trip."""
-    queue = deque([(ORIGIN,)])
-    paths = {ORIGIN: (ORIGIN,)}
-    while queue:
-        path = queue.popleft()
-        if len(path) > DAY_TRIP_EDGE_LIMIT:
-            continue
-        for target in neighbors(path[-1]):
-            if target in paths:
-                continue
-            paths[target] = (*path, target)
-            if target in known_sites:
-                queue.append(paths[target])
-    del paths[ORIGIN]
-    return paths

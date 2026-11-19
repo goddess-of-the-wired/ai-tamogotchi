@@ -14,6 +14,7 @@ from pathlib import Path
 from event_store import Event, append_events, canonical_history, migrate
 from exploration import HOME, ensure_map, explore
 from ip_geography import ORIGIN, initialize_geography, validate_geography
+from navigation import advance_journeys, initialize_resident_location
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
 from world_clock import (
@@ -157,6 +158,8 @@ def load(db):
     world = json.loads(row[0])
     for resident in world["residents"]:
         sync_traits(resident)
+        if "geography" in world:
+            initialize_resident_location(resident)
     validate_geography(world)
     ensure_map(world)
     return world
@@ -239,7 +242,11 @@ def advance(world):
             message = f"{worker['birth']['name']} finishes a paid shift and saves 1."
         record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
 
-    expedition = explore(world, rng_for(world["seed"], f"expedition:{turn}"))
+    expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
+    if "geography" in world:
+        events.extend(advance_journeys(world, expedition_rng))
+        return events
+    expedition = explore(world, expedition_rng)
     if expedition:
         record(expedition.kind, expedition.message, (expedition.resident,), expedition.effects,
                site_id=expedition.site_id)
@@ -449,6 +456,7 @@ def found_town(db, player, sheet, args):
     initialize_geography(world)
     for resident in world["residents"]:
         resident["birth"]["site_id"] = ORIGIN
+        initialize_resident_location(resident)
     save(db, world)
     birth_events = [
         Event("resident.born", f"{player['birth']['name']} arrives at the God Stone in Crossing.",

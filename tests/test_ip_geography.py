@@ -60,23 +60,16 @@ class GeographyTests(test_baseline.SimulationFixture):
         self.assertGreater(len(sites), 1)
         known = {ORIGIN}
         for event in self.view("history", "--json"):
-            if not event["type"].startswith("site."):
-                continue
-            path = event["effects"]["outbound_path"]
-            self.assertEqual(path[0], ORIGIN)
-            self.assertIn(path[1], GATEWAYS)
-            self.assertEqual(path[-1], event["site_id"])
-            self.assertTrue(set(path[:-1]) <= known)
-            self.assertLessEqual(len(path), 3)
-            for start, end in zip(path, path[1:]):
+            if event["type"] == "journey.moved":
+                start, end = event["effects"]["current_site_ip"]
+                self.assertIn(start, known)
                 self.assertIn(end, neighbors(start))
+                self.assertEqual(end, event["site_id"])
             if event["type"] == "site.discovered":
-                self.assertNotIn(path[-1], known)
-                known.add(path[-1])
-                self.assertEqual(sites[path[-1]], event["effects"]["site"][1])
-            else:
-                self.assertIn(path[-1], known)
-                self.assertNotIn("site", event["effects"])
+                site = event["site_id"]
+                self.assertNotIn(site, known)
+                known.add(site)
+                self.assertEqual(sites[site], event["effects"]["site"][1])
         self.assertEqual(set(sites), known)
         self.assertEqual(sites[ORIGIN], initial[ORIGIN])
 
