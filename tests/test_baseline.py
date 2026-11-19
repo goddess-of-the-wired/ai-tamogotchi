@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import glitch
-from exploration import discover
+from exploration import terrain_record
+from ip_geography import ORIGIN
 
 CLI = Path(glitch.__file__)
 
@@ -98,22 +99,22 @@ class BaselineTests(SimulationFixture):
     def test_exploration_and_history_survive_cli_restarts(self):
         self.found_town()
         original = self.view("map")
-        self.assertEqual(original, {"cell:0:0": discover("test", 0, 0, 0)})
+        self.assertEqual(set(original), {ORIGIN})
         first_turns = self.command("step", "--days", "4").stdout
         self.assertEqual(self.view("status")["turn"], 4)
         first_history = self.command("history").stdout
-        self.assertEqual(first_history, "Day 0: Baseline arrives in Crossing.\n" + first_turns)
+        self.assertEqual(first_history, "Day 0: Baseline arrives at the God Stone in Crossing.\n" + first_turns)
         self.command("step", "--days", "20")
         expanded = self.view("map")
         self.assertGreater(len(expanded), len(original))
-        self.assertEqual(expanded["cell:0:0"], original["cell:0:0"])
+        self.assertEqual(expanded[ORIGIN], original[ORIGIN])
         ids = {r["birth"]["id"] for r in self.view("status")["residents"]}
         for key, cell in expanded.items():
-            if key == "cell:0:0":
+            if key == ORIGIN:
                 continue
             self.assertIn(cell["discovered_by"], ids)
             self.assertLessEqual(cell["discovered_on"], 24)
-            self.assertEqual(cell, discover("test", *cell["coordinates"],
+            self.assertEqual(cell, terrain_record("test", key, *cell["coordinates"],
                                            cell["discovered_on"], cell["discovered_by"]))
         self.assertTrue(self.command("history").stdout.startswith(first_history))
 

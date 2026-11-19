@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added the God Stone, bounded virtual IPv4 geography, founding gateways, and lazy discovery while preserving legacy maps.
 - Added the six-hour world clock with versioned legacy migration, schedule inspection, and bounded catch-up.
 - Added versioned canonical events, causal links, a hash chain, and a transactional outbox alongside the prose chronicle.
 - Added SQLite snapshot backups, prototype regression tests, CI, and a manual recovery rehearsal.

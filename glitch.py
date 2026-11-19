@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from event_store import Event, append_events, canonical_history, migrate
-from exploration import ensure_map, explore
+from exploration import HOME, ensure_map, explore
+from ip_geography import ORIGIN, initialize_geography, validate_geography
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
 from world_clock import (
@@ -156,6 +157,7 @@ def load(db):
     world = json.loads(row[0])
     for resident in world["residents"]:
         sync_traits(resident)
+    validate_geography(world)
     ensure_map(world)
     return world
 
@@ -174,7 +176,9 @@ def advance(world):
     events = []
     player, mira, ivo = world["residents"]
 
-    def record(kind, message, actors, effects, *, site_id="cell:0:0", cause_type=None):
+    home = world.get("geography", {}).get("origin", HOME)
+
+    def record(kind, message, actors, effects, *, site_id=home, cause_type=None):
         events.append(Event(kind, message, tuple(r["birth"]["id"] for r in actors),
                             effects, site_id, cause_type))
 
@@ -442,16 +446,18 @@ def found_town(db, player, sheet, args):
         "workshop": "open", "repair": 0, "residents": [player, mira, ivo],
     }
     initialize_clock(world, time.time())
-    ensure_map(world)
+    initialize_geography(world)
+    for resident in world["residents"]:
+        resident["birth"]["site_id"] = ORIGIN
     save(db, world)
     birth_events = [
-        Event("resident.born", f"{player['birth']['name']} arrives in Crossing.",
+        Event("resident.born", f"{player['birth']['name']} arrives at the God Stone in Crossing.",
               tuple(r["birth"]["id"] for r in world["residents"]),
               {"residents": [[], [
                   {"id": r["birth"]["id"], "name": r["birth"]["name"],
                    "savings": r["savings"], "role": r["role"]}
                   for r in world["residents"]
-              ]]})
+              ]]}, site_id=ORIGIN)
     ]
     append_events(db, player["birth"]["id"], 0, birth_events)
     db.execute("DELETE FROM birth_draft WHERE id = 1")

@@ -75,16 +75,16 @@ neighbors and 15% for keeping anonymous notes), with 50% as the default.
 
 ## Exploration
 
-Crossing starts at (0, 0). Each day rolls for an expedition. Curiosity and
+Each day rolls for an expedition. Curiosity and
 adventurousness influence its odds and who goes. Each resident beyond the
 settlement's capacity of three adds five percentage points to expedition
 odds, up to an overall cap of 80%. Explorers take day trips and return home.
 
 Run `python3 glitch.py map` to see shared discoveries. Trips reveal cells
 along the explored frontier or revisit saved cells. Terrain is seeded by
-coordinates. Connected river cells share a feature ID. Each discovery
-records the first explorer and day. Existing towns begin with Crossing and
-expand on subsequent turns.
+virtual site identifiers and coordinates. Connected river cells share a feature ID. Each discovery
+records the first explorer and day. Existing saves keep their original
+coordinate maps and continue exploring in their legacy namespace.
 
 ## Test and rehearse recovery
 
@@ -226,3 +226,37 @@ PY
 The automated suite checks exact boundaries, catch-up limits, competing runners,
 and retry after an interrupted turn. Run it with
 `python3 -m unittest discover -s tests -v`.
+
+## Verify the God Stone and IPv4 geography
+
+New worlds begin at the God Stone (`127.0.0.1`). The order-16 Hilbert mapping
+covers the full IPv4 namespace on a bounded 65,536 × 65,536 grid. The origin is
+reserved as a separate location and connects only to the three founding
+region gateways. Every other address, including special-use addresses, is
+ordinary virtual terrain. The simulation makes no network requests.
+
+Only visited sites appear on the map. Until persistent journeys are added,
+residents take round trips of up to two edges each way, at a quarter-day
+per edge. Each trip records its outbound path in structured history.
+
+To check a fresh world on a temporary database, run:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  python3 glitch.py --db "$db" init --name Baseline --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$db" map
+  python3 glitch.py --db "$db" step --days 24
+  python3 glitch.py --db "$db" history --json
+)
+```
+
+The initial map should contain only `127.0.0.1` and its inscription. The
+birth event should name that site. Look for `site.discovered` events with an
+outbound path beginning at the origin and continuing through a founding
+gateway. Run `python3 -m unittest discover -s tests -v` to check round trips,
+gateway legality, the exact inscription, and legacy-save compatibility.

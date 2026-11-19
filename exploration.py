@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from random import Random
 
+from ip_geography import coordinates, day_trip_paths
+
 HOME = "cell:0:0"
 CAPACITY = 3
 NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
@@ -18,7 +20,10 @@ def cell_id(x, y):
 
 
 def discover(seed, x, y, day, explorer=None):
-    identifier = cell_id(x, y)
+    return terrain_record(seed, cell_id(x, y), x, y, day, explorer)
+
+
+def terrain_record(seed, identifier, x, y, day, explorer):
     feature = identifier
     if identifier == HOME:
         terrain = "settlement"
@@ -63,6 +68,15 @@ def explore(world, rng):
         return None
 
     resident = rng.choices(residents, weights=weights)[0]
+    if "geography" in world:
+        paths = day_trip_paths(cells)
+        visited = sorted(paths.keys() & cells.keys())
+        frontier = sorted(paths.keys() - cells.keys())
+        revisit = bool(visited) and (not frontier or rng.random() < 0.25)
+        identifier = rng.choice(visited if revisit else frontier)
+        x, y = coordinates(identifier)
+        return finish_expedition(world, resident, identifier, x, y, paths[identifier])
+
     known = sorted(tuple(cell["coordinates"]) for cell in cells.values())
     visited = [point for point in known if point != (0, 0)]
     revisit = bool(visited) and rng.random() < 0.25
@@ -76,17 +90,25 @@ def explore(world, rng):
             if cell_id(x + dx, y + dy) not in cells
         })
         x, y = rng.choice(frontier)
-    identifier = cell_id(x, y)
+    return finish_expedition(world, resident, cell_id(x, y), x, y)
+
+
+def finish_expedition(world, resident, identifier, x, y, path=None):
+    cells = world["map"]
+    revisit = identifier in cells
     origin = resident["birth"]
     day = world["turn"]
     if not revisit:
-        cells[identifier] = discover(world["seed"], x, y, day, origin["id"])
+        cells[identifier] = terrain_record(world["seed"], identifier, x, y, day, origin["id"])
     previous_expedition = resident.get("last_expedition")
     resident["last_expedition"] = {"day": day, "cell_id": identifier}
     verb = "revisits" if revisit else "discovers"
     effects = {"last_expedition": [previous_expedition, resident["last_expedition"]]}
+    if path is not None:
+        effects["outbound_path"] = path
     if not revisit:
         effects["site"] = [None, cells[identifier]]
     kind = "site.revisited" if revisit else "site.discovered"
-    message = f"{origin['name']} {verb} {cells[identifier]['terrain']} at ({x}, {y}) and returns home."
+    location = identifier if path is not None else f"({x}, {y})"
+    message = f"{origin['name']} {verb} {cells[identifier]['terrain']} at {location} and returns home."
     return Expedition(kind, message, resident, identifier, effects)
