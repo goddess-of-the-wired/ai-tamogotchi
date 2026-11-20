@@ -12,6 +12,7 @@ from event_store import encode
 
 PUBLIC_EVENTS = {"resident.born", "journey.started", "journey.moved",
                  "site.discovered", "site.seen", "site.studied",
+                 "site.feature_discovered", "site.feature_seen",
                  "research.started", "research.resumed", "research.experiment",
                  "research.notebook", "settlement.founded", "institution.formed",
                  "institution.dissolved", "research.synthesized"}

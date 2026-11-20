@@ -181,8 +181,10 @@ class ObserverApp:
                 origin = world.get("geography", {}).get("origin", glitch.HOME)
                 sites = world["map"]
                 keys = sorted(sites)
-                result = {"total": len(keys), "origin": sites.get(origin),
-                          "sites": [sites[key] for key in keys[offset:offset + PAGE_SIZE]]}
+                features = world.get("site_features", {})
+                page = [{**sites[key], "finding": features[key]["label"]} if key in features
+                        else sites[key] for key in keys[offset:offset + PAGE_SIZE]]
+                result = {"total": len(keys), "origin": sites.get(origin), "sites": page}
             else:
                 entries = self.public_entries(db, resident, offset)
                 if path == "/api/digest":

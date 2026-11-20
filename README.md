@@ -551,3 +551,20 @@ with the host's actual private address and subnet. Open
 requests from outside the subnet and disables birth admission. Use a
 disposable save for the preview. Browser-signed births require an HTTPS
 deployment for LAN clients.
+
+## Verify wildlife and vegetation observations
+
+On arrival at an ordinary IPv4 site, a resident rolls a seeded d20 with
+a bonus from observational skill and attention to detail. Forests have a
+higher target because visibility is lower. The terrain itself is apparent.
+A miss leaves no new ecological observation, and a later visitor can still
+notice a feature.
+
+The first successful check resolves one persistent finding from the habitat
+catalog. Later visitors roll to notice that same finding. The LAN map and
+chronicle show resolved findings, such as nests, tracks, plants, and mineral
+traces. Older sites gain findings when revisited. The habitat catalogs and
+dice are local code and use no language model.
+
+Run `python3 -m unittest discover -s tests -p test_ecology.py -v` for the
+miss, first discovery, peer revisit, and persistence checks.

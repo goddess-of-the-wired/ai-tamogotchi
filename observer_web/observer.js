@@ -91,7 +91,9 @@ async function loadSites(reset) {
     el("origin-title").textContent = (page.origin.name || "Crossing") + " · " + page.origin.id;
     el("inscription").textContent = page.origin.inscription || page.origin.terrain;
   }
-  for (const site of page.sites) appendRow("sites", site.id, site.terrain);
+  for (const site of page.sites) {
+    appendRow("sites", site.id, site.finding ? site.terrain + " · " + site.finding : site.terrain);
+  }
   siteOffset += page.sites.length;
   el("more-sites").hidden = siteOffset >= page.total;
 }

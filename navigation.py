@@ -3,6 +3,7 @@
 from collections import deque
 from hashlib import sha256
 
+from ecology import observe_ecology
 from event_store import Event
 from exploration import expedition_weight, terrain_record
 from ip_geography import ORIGIN, coordinates, neighbors
@@ -80,6 +81,7 @@ def move_resident(world, resident):
         resident["site_seen"][site] = observation
         events.append(Event("site.seen", f"{name} observes {observation['terrain']} at {site}.",
                             (actor,), {"site_seen": [None, observation]}, site))
+    events.extend(observe_ecology(world, resident, site))
     return events
 
 

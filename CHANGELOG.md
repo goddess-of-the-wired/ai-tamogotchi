@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added perception rolls and persistent plant, animal, and geological findings on resident journeys.
 - Added a subnet-restricted, read-only LAN mode for the observer preview.
 - Added a local observer web beta with browser-signed births, saved follows, timelines, map, and activity digest.
 - Added independent witness signatures and confirmation tracking for published proof batches.
