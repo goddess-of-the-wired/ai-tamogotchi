@@ -294,3 +294,27 @@ legacy worlds continue using their original expedition model.
 
 Run `python3 -m unittest discover -s tests -v` to check restart continuity,
 legal edges, distinct observation and survey records, and shared discoveries.
+
+## Verify autonomous residents
+
+Use a fresh temporary save. The default founding cast includes two examples.
+Pass `--solo` to omit them. Add residents to either world with `add-resident`.
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  python3 glitch.py --db "$db" init --solo --name Alex --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$db" add-resident --name Robin --seed robin \
+    --priorities stability curiosity generosity
+  python3 glitch.py --db "$db" step --days 4
+  python3 glitch.py --db "$db" status
+)
+```
+
+Look for both residents, daily goals, energy, memories, and relationships.
+Repeated greetings build familiarity, which can change a later greeting
+into a conversation. The automated suite runs 20 residents for 100 days.

@@ -54,7 +54,9 @@ def append_events(db, world_id, turn, events):
     row = db.execute("""SELECT event_id FROM canonical_events
         ORDER BY turn DESC, position DESC LIMIT 1""").fetchone()
     previous = row[0] if row else None
-    for position, event in enumerate(events):
+    start = db.execute("SELECT COALESCE(MAX(position) + 1, 0) FROM events WHERE turn = ?",
+                       (turn,)).fetchone()[0]
+    for position, event in enumerate(events, start):
         causes = []
         if event.cause_type:
             cause = db.execute("""SELECT event_id FROM canonical_events WHERE type = ?

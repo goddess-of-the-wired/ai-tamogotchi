@@ -15,6 +15,7 @@ from event_store import Event, append_events, canonical_history, migrate
 from exploration import HOME, ensure_map, explore
 from ip_geography import ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
+from residents import daily_decisions, initialize as initialize_resident
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
 from world_clock import (
@@ -158,6 +159,7 @@ def load(db):
     world = json.loads(row[0])
     for resident in world["residents"]:
         sync_traits(resident)
+        initialize_resident(resident)
         if "geography" in world:
             initialize_resident_location(resident)
     validate_geography(world)
@@ -177,7 +179,16 @@ def advance(world):
     turn = world["turn"]
     rng = rng_for(world["seed"], turn)
     events = []
-    player, mira, ivo = world["residents"]
+    population = world["residents"]
+    lead = population[0]
+    staff = world.setdefault("workshop_staff", {
+        "mechanic": next((r["birth"]["id"] for r in population[1:]
+                          if r["role"] == "mechanic"), None),
+        "filled": any(r["role"] == "apprentice" for r in population),
+    })
+    mechanic = next((r for r in population if r["birth"]["id"] == staff["mechanic"]), lead)
+    crew = (lead,) if mechanic is lead else (lead, mechanic)
+    applicant = next((r for r in population if r not in crew and r["role"] == "resident"), None)
 
     home = world.get("geography", {}).get("origin", HOME)
 
@@ -187,52 +198,53 @@ def advance(world):
 
     consequential = rng_for(world["seed"], f"consequential:{turn}").random() < CONSEQUENTIAL_CHANCE
     if world["workshop"] == "open" and consequential:
-        roles = {r["birth"]["id"]: [r["role"], "resident"] for r in (player, mira)}
+        roles = {r["birth"]["id"]: [r["role"], "resident"] for r in crew}
         world["workshop"] = "closed"
-        player["role"] = "resident"
-        mira["role"] = "resident"
-        record("workshop.closed", "A broken drive shaft closes the workshop. Mira asks for help repairing it.",
-               (mira, player), {"workshop": ["open", "closed"], "roles": roles})
+        lead["role"] = "resident"
+        mechanic["role"] = "resident"
+        record("workshop.closed", "A broken drive shaft closes the workshop. The crew asks for help repairing it.",
+               crew, {"workshop": ["open", "closed"], "roles": roles})
 
     if world["workshop"] == "closed":
-        origin = player["birth"]
+        origin = lead["birth"]
         name = origin["name"]
         motives = {value: 3 - index for index, value in enumerate(origin["priorities"])}
         help_score = (
             motives.get("loyalty", 0) + motives.get("generosity", 0)
-            + (1 + 4 * player["traits"]["courage"]) + player["trust"]
+            + (1 + 4 * lead["traits"]["courage"]) + lead["trust"]
         )
         work_score = 4 + motives.get("stability", 0) + motives.get("ambition", 0)
-        before = {key: player[key] for key in ("savings", "trust", "role")}
+        before = {key: lead[key] for key in ("savings", "trust", "role")}
         repair_before = world["repair"]
-        if player["savings"] >= 3 and help_score >= work_score:
-            player["savings"] -= 3
-            player["trust"] += 1
-            player["role"] = "workshop hand"
+        if lead["savings"] >= 3 and help_score >= work_score:
+            lead["savings"] -= 3
+            lead["trust"] += 1
+            lead["role"] = "workshop hand"
             world["repair"] += 2
-            message = f"{name} spends 3 savings repairing the workshop with Mira. Trust grows."
+            message = f"{name} spends 3 savings repairing the workshop with the crew. Trust grows."
         else:
-            player["savings"] += 2
-            player["role"] = "market courier"
-            message = f"{name} takes a market shift for 2 savings while Mira works on the repair."
+            lead["savings"] += 2
+            lead["role"] = "market courier"
+            message = f"{name} takes a market shift for 2 savings while the crew works on the repair."
         world["repair"] += 1
-        effects = {key: [value, player[key]] for key, value in before.items()}
+        effects = {key: [value, lead[key]] for key, value in before.items()}
         effects["repair"] = [repair_before, world["repair"]]
-        record("resident.savings_changed", message, (player, mira), effects,
+        record("resident.savings_changed", message, crew, effects,
                cause_type="workshop.closed")
         if world["repair"] >= 4:
             world["workshop"] = "reopened"
-            role = mira["role"]
-            mira["role"] = "mechanic"
-            record("workshop.reopened", "Mira reopens the workshop and posts a paid apprenticeship.",
-                   (mira,), {"workshop": ["closed", "reopened"], "role": [role, mira["role"]]},
+            role = mechanic["role"]
+            mechanic["role"] = "mechanic"
+            record("workshop.reopened", "The crew reopens the workshop and posts a paid apprenticeship.",
+                   (mechanic,), {"workshop": ["closed", "reopened"], "role": [role, mechanic["role"]]},
                    cause_type="resident.savings_changed")
-    elif world["workshop"] == "reopened" and ivo["role"] == "resident":
-        ivo["role"] = "apprentice"
-        record("resident.job_assigned", "Ivo takes the apprenticeship created by the workshop repair.",
-               (ivo,), {"role": ["resident", "apprentice"]}, cause_type="workshop.reopened")
+    elif world["workshop"] == "reopened" and not staff["filled"] and applicant is not None:
+        applicant["role"] = "apprentice"
+        staff["filled"] = True
+        record("resident.job_assigned", f"{applicant['birth']['name']} takes the apprenticeship created by the workshop repair.",
+               (applicant,), {"role": ["resident", "apprentice"]}, cause_type="workshop.reopened")
     else:
-        worker = rng.choice([resident for resident in world["residents"] if resident["role"] != "resident"])
+        worker = rng.choice([r for r in population if r["role"] != "resident"] or population)
         savings = worker["savings"]
         if consequential:
             worker["savings"] += 3
@@ -242,6 +254,7 @@ def advance(world):
             message = f"{worker['birth']['name']} finishes a paid shift and saves 1."
         record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
 
+    events.extend(daily_decisions(world, home))
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
         events.extend(advance_journeys(world, expedition_rng))
@@ -332,7 +345,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     draft = commands.add_parser("draft", help="draw or reopen a resident's birth sheet")
     init = commands.add_parser("init", help="finish a birth sheet and found the town")
-    for command in (draft, init):
+    init.add_argument("--solo", action="store_true", help="omit the two example residents")
+    add = commands.add_parser("add-resident", help="create a resident in an existing world")
+    for command in (draft, init, add):
         command.add_argument("--name")
         command.add_argument("--priorities", nargs=3, choices=PRIORITIES)
         command.add_argument("--seed", help="reuse a seed to reproduce initial traits")
@@ -410,6 +425,31 @@ def main():
                 print("Finish with init. Spend up to 6 points (3 per scalar); set up to 2 offered habits.")
             else:
                 print(f"Crossing is ready. Resident ID {player['birth']['id']}")
+        elif args.command == "add-resident":
+            db.execute("BEGIN IMMEDIATE")
+            with db:
+                world = load(db)
+                if world is None:
+                    raise SystemExit("Initialize the town with the init command first.")
+                if not args.name or not args.name.strip() or not args.priorities or len(set(args.priorities)) != 3:
+                    raise SystemExit("Provide --name and three distinct --priorities.")
+                seed = args.seed if args.seed is not None else secrets.token_hex(16)
+                resident = birth(args.name.strip(), args.priorities, seed)
+                resident["birth"]["traits"] = resident["traits"].copy()
+                resident["birth"]["day"] = world["turn"]
+                initialize_resident(resident)
+                site = world.get("geography", {}).get("origin", HOME)
+                if "geography" in world:
+                    resident["birth"]["site_id"] = site
+                    initialize_resident_location(resident)
+                world["residents"].append(resident)
+                actor = resident["birth"]["id"]
+                message = f"{resident['birth']['name']} joins Crossing."
+                append_events(db, world["residents"][0]["birth"]["id"], world["turn"], [
+                    Event("resident.born", message, (actor,), {"name": resident["birth"]["name"]}, site)
+                ])
+                save(db, world)
+            print(f"{message} Resident ID {actor}")
         elif args.command in {"status", "map"}:
             world = load(db)
             if world is None:
@@ -450,13 +490,14 @@ def found_town(db, player, sheet, args):
         resident["birth"]["traits"] = resident["traits"].copy()
     world = {
         "name": "Crossing", "seed": seed, "turn": 0,
-        "workshop": "open", "repair": 0, "residents": [player, mira, ivo],
+        "workshop": "open", "repair": 0, "residents": [player] if args.solo else [player, mira, ivo],
     }
     initialize_clock(world, time.time())
     initialize_geography(world)
     for resident in world["residents"]:
         resident["birth"]["site_id"] = ORIGIN
         initialize_resident_location(resident)
+        initialize_resident(resident)
     save(db, world)
     birth_events = [
         Event("resident.born", f"{player['birth']['name']} arrives at the God Stone in Crossing.",

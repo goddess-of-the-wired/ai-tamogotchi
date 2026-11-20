@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added configurable resident populations, daily goals, energy, and persistent social decisions.
 - Added persistent resident journeys, one-edge-per-day movement, and separate terrain observations and surveys.
 - Added the God Stone, bounded virtual IPv4 geography, founding gateways, and lazy discovery while preserving legacy maps.
 - Added the six-hour world clock with versioned legacy migration, schedule inspection, and bounded catch-up.

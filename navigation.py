@@ -5,7 +5,7 @@ from hashlib import sha256
 
 from event_store import Event
 from exploration import expedition_weight, terrain_record
-from ip_geography import coordinates, neighbors
+from ip_geography import ORIGIN, coordinates, neighbors
 
 ROUTE_EDGES = 10
 
@@ -18,7 +18,8 @@ def choose_route(start, rng):
     while frontier:
         path = frontier.popleft()
         if len(path) == ROUTE_EDGES + 1:
-            destinations.append(path)
+            if path[-1] != ORIGIN:
+                destinations.append(path)
             continue
         for site in neighbors(path[-1]):
             if site not in visited:
@@ -33,7 +34,7 @@ def initialize_resident_location(resident):
     resident.setdefault("current_site_ip", home)
     resident.setdefault("journey_id", None)
     resident.setdefault("journey", None)
-    resident.setdefault("site_seen", {home: {"day": 0, "terrain": "origin"}})
+    resident.setdefault("site_seen", {home: {"day": resident["birth"].get("day", 0), "terrain": "origin"}})
     resident.setdefault("site_studied", {})
 
 
