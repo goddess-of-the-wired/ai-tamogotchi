@@ -349,19 +349,32 @@ assay followed by a successful peer attempt with a mistaken interpretation.
 
 ## Verify creator linkage and observer reads
 
-Signed births use Ed25519 and the OpenSSL 3 command-line tools. Run in a
-temporary working directory with an initialized database. The private key
-stays with the creator.
+Signed births use Ed25519 and the OpenSSL 3 command-line tools. Run
+from the repository root. This rehearsal keeps its database and keys in a
+temporary directory. In normal use, the private key stays with the creator.
 
 ```sh
-openssl genpkey -algorithm ED25519 -out creator.pem
-openssl pkey -in creator.pem -pubout -out creator.pub
-python3 glitch.py --db world.sqlite3 birth-request --public-key creator.pub \
-  --name Robin --priorities loyalty curiosity stability > birth.json
-openssl pkeyutl -sign -inkey creator.pem -rawin -in birth.json -out birth.sig
-python3 glitch.py --db world.sqlite3 birth-admit birth.json birth.sig
-python3 glitch.py --db world.sqlite3 observer status
-python3 glitch.py --db world.sqlite3 observer timeline
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  python3 glitch.py --db "$db" init --solo --name Alex \
+    --priorities loyalty curiosity stability
+  openssl genpkey -algorithm ED25519 -out "$scratch/creator.pem"
+  openssl pkey -in "$scratch/creator.pem" -pubout -out "$scratch/creator.pub"
+  python3 glitch.py --db "$db" birth-request --public-key "$scratch/creator.pub" \
+    --name Robin --priorities loyalty curiosity stability > "$scratch/birth.json"
+  openssl pkeyutl -sign -inkey "$scratch/creator.pem" -rawin \
+    -in "$scratch/birth.json" -out "$scratch/birth.sig"
+  resident=$(python3 glitch.py --db "$db" birth-admit "$scratch/birth.json" "$scratch/birth.sig")
+  python3 glitch.py --db "$db" observer status
+  python3 glitch.py --db "$db" observer timeline --resident "$resident"
+  if python3 glitch.py --db "$db" birth-admit "$scratch/birth.json" "$scratch/birth.sig"; then
+    echo "Unexpected successful replay" >&2
+    exit 1
+  fi
+)
 ```
 
 Verify that Robin has a certificate and no private traits or seed in the
