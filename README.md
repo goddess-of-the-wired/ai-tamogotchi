@@ -374,3 +374,13 @@ Notebook bytes are stored in SQLite by SHA-256 so backups include them.
 Read or export an artifact with
 `python3 glitch.py --db world.sqlite3 observer artifact DIGEST`. The command
 verifies the hash before emitting the exact bytes.
+
+## Verify the inherited research scenario
+
+Run `python3 -m unittest discover -s tests -p test_acceptance.py -v`. This
+rehearsal starts a temporary world using seed `acceptance-15`, stops midway
+through a journey, and resumes the same save. The chronicle should record
+Ivo's mountain discovery at `172.16.0.51`, a failed classification attempt,
+and Alex continuing from the notebook. Alex's test finds mountain terrain
+but the interpretation is mistaken. The rehearsal checks the observer
+timeline and both artifact hashes on a reopened SQLite backup.

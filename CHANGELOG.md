@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added a seeded acceptance rehearsal for mountain exploration, failed research, and notebook inheritance.
 - Added creator-signed births, a read-only observer CLI, and verified notebook artifacts.
 - Added versioned research hypotheses, staged local experiments, interpretations, and notebooks that peers can use.
 - Added configurable resident populations, daily goals, energy, and persistent social decisions.
