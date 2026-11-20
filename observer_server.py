@@ -8,6 +8,7 @@ import subprocess
 import time
 from collections import Counter
 from contextlib import closing
+from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from pathlib import Path
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
@@ -29,9 +30,12 @@ class HTTPError(Exception):
 
 
 class ObserverApp:
-    def __init__(self, database, port, *, clock=time.monotonic):
+    def __init__(self, database, port, *, clock=time.monotonic, lan=None):
         self.database = Path(database).resolve()
         self.hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
+        self.lan = lan
+        if lan:
+            self.hosts = {f"{lan.ip}:{port}"}
         self.clock = clock
         self.challenges = {}
         self.recent_birth_requests = []
@@ -44,7 +48,11 @@ class ObserverApp:
         try:
             if env.get("HTTP_HOST") not in self.hosts:
                 raise HTTPError("403 Forbidden", "Use the configured loopback address.")
+            if self.lan and IPv4Address(env["REMOTE_ADDR"]) not in self.lan.network:
+                raise HTTPError("403 Forbidden", "This preview is limited to the local subnet.")
             method, path = env["REQUEST_METHOD"], env["PATH_INFO"]
+            if self.lan and method != "GET":
+                raise HTTPError("405 Method Not Allowed", "The LAN preview is read-only.")
             if method == "POST" and path in ("/api/birth/challenge", "/api/birth/admit"):
                 origin = env.get("HTTP_ORIGIN")
                 if origin and origin != "http://" + env["HTTP_HOST"]:
@@ -154,6 +162,7 @@ class ObserverApp:
                 result["total"] = len(result["residents"])
                 result["residents"] = result["residents"][offset:offset + PAGE_SIZE]
                 result["priorities"] = glitch.PRIORITIES
+                result["birth_enabled"] = self.lan is None
             elif path == "/api/map":
                 world = self.load_world(db)
                 origin = world.get("geography", {}).get("origin", glitch.HOME)
@@ -193,10 +202,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--lan-read-only", type=IPv4Interface, metavar="ADDRESS/PREFIX",
+                        help="serve reads on an IPv4 private subnet")
     args = parser.parse_args()
-    app = ObserverApp(args.db, args.port)
-    with make_server("127.0.0.1", args.port, app) as server:
-        print(f"Glitch World observer at http://localhost:{args.port}", flush=True)
+    lan = args.lan_read_only
+    private = tuple(map(IPv4Network, ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")))
+    if lan and not any(lan.network.subnet_of(network) for network in private):
+        parser.error("The LAN subnet must fit within an RFC 1918 range.")
+    app = ObserverApp(args.db, args.port, lan=lan)
+    host = str(lan.ip) if lan else "127.0.0.1"
+    with make_server(host, args.port, app) as server:
+        print(f"Glitch World observer at http://{host}:{args.port}", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

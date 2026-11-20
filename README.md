@@ -543,3 +543,11 @@ request. There is no notification delivery or external inference dependency.
 
 For HTTP, signature, replay, quota, and privacy checks run
 `python3 -m unittest discover -s tests -p test_observer_server.py -v`.
+
+For a read-only HTTP preview on a private Wi-Fi/LAN, use
+`python3 observer_server.py --db world.sqlite3 --lan-read-only 192.168.0.2/24`
+with the host's actual private address and subnet. Open
+`http://192.168.0.2:8765` from a device on the same subnet. This mode rejects
+requests from outside the subnet and disables birth admission. Use a
+disposable save for the preview. Browser-signed births require an HTTPS
+deployment for LAN clients.

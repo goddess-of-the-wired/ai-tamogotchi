@@ -54,6 +54,10 @@ async function loadRoster(reset) {
   }
   const state = await api("/api/status?offset=" + rosterOffset);
   el("world-status").textContent = state.name + " · World day " + state.turn;
+  el("birth-form").hidden = !state.birth_enabled;
+  if (!state.birth_enabled) {
+    el("birth-status").textContent = "Birth admission is disabled in this read-only LAN preview.";
+  }
   for (const resident of state.residents) {
     roster.set(resident.id, resident.name);
     const label = resident.site ? resident.name + " · " + resident.site : resident.name;

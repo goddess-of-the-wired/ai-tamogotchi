@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import subprocess
+from ipaddress import IPv4Interface
 from threading import Thread
 from urllib.request import urlopen
 from wsgiref.simple_server import make_server
@@ -17,10 +18,10 @@ class ObserverServerTests(test_baseline.SimulationFixture):
         self.now = 0
         self.app = ObserverApp(self.db, 8765, clock=lambda: self.now)
 
-    def call(self, path, body=None, *, host="localhost:8765", origin=None, method=None, query=""):
+    def call(self, path, body=None, *, host="localhost:8765", origin=None, method=None, query="", peer="127.0.0.1"):
         data = json.dumps(body).encode() if body is not None else b""
         env = {"HTTP_HOST": host, "REQUEST_METHOD": method or ("POST" if body is not None else "GET"),
-               "PATH_INFO": path, "QUERY_STRING": query, "CONTENT_TYPE": "application/json",
+               "PATH_INFO": path, "REMOTE_ADDR": peer, "QUERY_STRING": query, "CONTENT_TYPE": "application/json",
                "CONTENT_LENGTH": str(len(data)), "wsgi.input": io.BytesIO(data)}
         if origin:
             env["HTTP_ORIGIN"] = origin
@@ -79,6 +80,15 @@ class ObserverServerTests(test_baseline.SimulationFixture):
         self.assertEqual(self.call("/api/birth/challenge", {}, origin="https://other.example")[0], 403)
         self.assertEqual(self.call("/api/status", host="other.example")[0], 403)
         self.assertEqual(self.call("/api/map", query="offset=-1")[0], 400)
+
+    def test_lan_preview_limits_clients_and_rejects_all_writes(self):
+        self.app = ObserverApp(self.db, 8765, lan=IPv4Interface("192.168.0.2/24"))
+        host = "192.168.0.2:8765"
+        status, data = self.call("/api/status", host=host, peer="192.168.0.4")
+        self.assertEqual(status, 200)
+        self.assertFalse(data["birth_enabled"])
+        self.assertEqual(self.call("/api/status", host=host, peer="203.0.113.1")[0], 403)
+        self.assertEqual(self.call("/api/birth/challenge", {}, host=host, peer="192.168.0.4")[0], 405)
 
     def test_live_loopback_serves_assets_map_and_security_headers(self):
         with make_server("127.0.0.1", 0, None) as server:
