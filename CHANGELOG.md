@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Features
+- Added independent witness signatures and confirmation tracking for published proof batches.
+- Added local production, barter, resident councils, and retained settlement treasuries.
+- Added scientific lineages and resident beliefs distinct from canonical site facts.
+- Added verifiable private checkpoint export and restoration for independent replicas.
+- Added regional social scheduling, a reduced solitary path, bounded topology caching, and a scale benchmark.
 - Added independently verifiable public Merkle manifests and retryable local dry-run publication.
 - Added a seeded acceptance rehearsal for mountain exploration, failed research, and notebook inheritance.
 - Added creator-signed births, a read-only observer CLI, and verified notebook artifacts.

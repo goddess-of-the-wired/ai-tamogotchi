@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from event_store import encode
-from observer import PUBLIC_EVENTS
+from observer import PUBLIC_EVENTS, verify_signature
 
 BATCH_LIMIT = 64
 SCHEMA = "glitch.public-proof.v1"
@@ -108,3 +108,31 @@ def publish_batch(db, directory, publisher=publish_local):
         db.executemany("UPDATE event_outbox SET publication_status = 'published' WHERE event_id = ?",
                        [(record["event_id"],) for record in manifest["records"]])
     return {"root": root, "manifest": str(destination), "records": len(manifest["records"])}
+
+
+def witness_payload(manifest, trusted_root, required_events=()):
+    result = verify_manifest(manifest, trusted_root, required_events)
+    return {"schema": "glitch.proof-witness.v1", **result,
+            "world_id": manifest["records"][0]["world_id"]}
+
+
+def confirm_batch(db, root, signature, witness):
+    saved = db.execute("SELECT manifest FROM proof_batches WHERE root = ? AND status = 'published'",
+                       (root,)).fetchone()
+    if not saved:
+        raise ValueError("Publish this batch before confirming it.")
+    payload = witness_payload(json.loads(saved[0]), root)
+    verify_signature(payload, signature, witness)
+    with db:
+        db.execute("INSERT OR IGNORE INTO proof_confirmations VALUES (?, ?, ?)",
+                   (root, witness, signature))
+    return confirmation_status(db, root)
+
+
+def confirmation_status(db, root):
+    row = db.execute("SELECT status FROM proof_batches WHERE root = ?", (root,)).fetchone()
+    if not row:
+        raise ValueError("Unknown batch root.")
+    count, = db.execute("SELECT COUNT(*) FROM proof_confirmations WHERE root = ?",
+                        (root,)).fetchone()
+    return {"root": root, "status": "confirmed" if count else row[0], "witnesses": count}

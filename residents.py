@@ -11,11 +11,26 @@ def initialize(resident):
     resident.setdefault("memories", [])
 
 
-def daily_decisions(world, home):
-    groups = defaultdict(list)
-    for resident in world["residents"]:
-        groups[resident.get("current_site_ip", home)].append(resident)
-    for site, group in groups.items():
+def regional_groups(residents, home):
+    regions = {}
+    for resident in residents:
+        site = resident.get("current_site_ip", home)
+        region = site.partition(".")[0] if "." in site else "legacy"
+        regions.setdefault(region, defaultdict(list))[site].append(resident)
+    for sites in regions.values():
+        yield from sites.items()
+
+
+def daily_decisions(world, home, *, reduced=True):
+    for site, group in regional_groups(world["residents"], home):
+        if reduced and len(group) == 1:
+            resident = group[0]
+            energy = resident["energy"]
+            if energy:
+                resident.update(energy=energy - 1, goal="observe")
+            else:
+                resident.update(energy=4, goal="rest")
+            continue
         for index, resident in enumerate(group):
             if resident["energy"] == 0:
                 resident.update(energy=4, goal="rest")

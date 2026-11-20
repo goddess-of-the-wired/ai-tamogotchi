@@ -1,5 +1,6 @@
 """Version-one virtual IPv4 geography. Addresses are game identifiers."""
 
+from functools import lru_cache
 from ipaddress import IPv4Address, IPv4Network
 
 GRID_SIZE = 1 << 16
@@ -77,19 +78,25 @@ def address_at(x, y):
 
 
 def neighbors(address):
+    return iter(neighbor_sites(address))
+
+
+@lru_cache(maxsize=8192)
+def neighbor_sites(address):
     """Yield legal version-one edges, including explicit origin gateways."""
     if address == ORIGIN:
-        yield from GATEWAYS
-        return
+        return GATEWAYS
+    adjacent = []
     x, y = coordinates(address)
     for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
         next_x, next_y = x + dx, y + dy
         if 0 <= next_x < GRID_SIZE and 0 <= next_y < GRID_SIZE:
             target = address_at(next_x, next_y)
             if target != ORIGIN:
-                yield target
+                adjacent.append(target)
     if address in GATEWAYS:
-        yield ORIGIN
+        adjacent.append(ORIGIN)
+    return tuple(adjacent)
 
 
 def initialize_geography(world):

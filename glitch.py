@@ -7,21 +7,27 @@ import secrets
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from checkpoints import export_checkpoint, verify_checkpoint
+from economy import advance_economy
 from event_store import Event, append_events, canonical_history, encode, migrate
 from exploration import HOME, ensure_map, explore
 from ip_geography import ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
 from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_status,
                       public_key_der, read_artifact, store_notebooks, verify_birth)
-from public_proofs import publish_batch, verify_manifest
+from public_proofs import (confirmation_status, confirm_batch, publish_batch,
+                           verify_manifest, witness_payload)
 from research import advance_research
 from residents import daily_decisions, initialize as initialize_resident
+from scholarship import record_scholarship
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
 from world_clock import (
@@ -263,12 +269,15 @@ def advance(world):
     events.extend(daily_decisions(world, home))
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
+        events.extend(advance_economy(world))
         events.extend(advance_journeys(world, expedition_rng))
 
         def research_roll(key, stage):
             return rng_for(world["seed"], f"research:{key}:{stage}").randrange(100)
 
-        events.extend(advance_research(world, research_roll))
+        findings = advance_research(world, research_roll)
+        events.extend(findings)
+        events.extend(record_scholarship(world, findings))
         return events
     expedition = explore(world, expedition_rng)
     if expedition:
@@ -424,6 +433,50 @@ def admit_signed_birth(db, request, certificate):
     return resident_id
 
 
+def initialize_storage(db):
+    db.execute("PRAGMA foreign_keys = ON")
+    db.execute("CREATE TABLE IF NOT EXISTS world (id INTEGER PRIMARY KEY, state TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS birth_draft (id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
+    db.execute("""CREATE TABLE IF NOT EXISTS events (
+        turn INTEGER NOT NULL, position INTEGER NOT NULL, message TEXT NOT NULL,
+        PRIMARY KEY (turn, position)
+    )""")
+
+    migrate(db)
+
+
+def benchmark(population, days):
+    """Measure the simulation against an isolated on-disk world."""
+    with TemporaryDirectory() as directory:
+        database = Path(directory) / "bench.sqlite3"
+        with closing(sqlite3.connect(database)) as db:
+            initialize_storage(db)
+            founder = birth("Benchmark founder", list(PRIORITIES[:3]), "benchmark")
+            options = argparse.Namespace(spend=[], habit=[], solo=True)
+            with db:
+                found_town(db, founder, character_sheet(founder), options)
+                world = load(db)
+                for number in range(1, population):
+                    resident = birth(f"Resident {number}", list(PRIORITIES[:3]), str(number))
+                    resident["birth"]["site_id"] = ORIGIN
+                    initialize_resident_location(resident)
+                    initialize_resident(resident)
+                    world["residents"].append(resident)
+                save(db, world)
+            start = time.perf_counter()
+            with open(Path(directory) / "steps.log", "w") as sink, redirect_stdout(sink):
+                for _ in range(days):
+                    step(db)
+            elapsed = time.perf_counter() - start
+            count, history_bytes = db.execute(
+                "SELECT COUNT(*), SUM(length(CAST(record AS BLOB))) FROM canonical_events"
+            ).fetchone()
+            snapshot_bytes, = db.execute("SELECT length(CAST(state AS BLOB)) FROM world").fetchone()
+        return {"population": population, "days": days, "elapsed_seconds": round(elapsed, 6),
+                "database_bytes": database.stat().st_size, "snapshot_bytes": snapshot_bytes,
+                "events": count, "event_payload_bytes": history_bytes, "inference_calls": 0}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="glitch.sqlite3")
@@ -463,12 +516,53 @@ def main():
     verify.add_argument("manifest", type=Path)
     verify.add_argument("--root", required=True)
     verify.add_argument("--event", action="append", default=[])
+    witness = proof_commands.add_parser("witness-payload", help="verify records and emit witness signing bytes")
+    witness.add_argument("manifest", type=Path)
+    witness.add_argument("--root", required=True)
+    witness.add_argument("--event", action="append", default=[])
+    confirm = proof_commands.add_parser("confirm", help="record an independent signed confirmation")
+    confirm.add_argument("root")
+    confirm.add_argument("signature", type=Path)
+    confirm.add_argument("--public-key", required=True, type=Path)
+    proof_status = proof_commands.add_parser("status", help="show publication and confirmation state")
+    proof_status.add_argument("root")
+    checkpoint = commands.add_parser("checkpoint", help="export, verify or restore a private archive")
+    checkpoint_commands = checkpoint.add_subparsers(dest="operation", required=True)
+    for operation in ("export", "verify", "restore"):
+        command = checkpoint_commands.add_parser(operation)
+        command.add_argument("archive", type=Path)
+        if operation != "export":
+            command.add_argument("--digest", required=True)
+        if operation == "restore":
+            command.add_argument("destination", type=Path)
+    bench = commands.add_parser("benchmark", help="measure an isolated simulation")
+    bench.add_argument("--population", type=positive, default=20)
+    bench.add_argument("--days", type=positive, default=30)
     args = parser.parse_args()
 
-    if args.command == "proof" and args.proof_command == "verify":
+    if args.command == "benchmark":
+        print(json.dumps(benchmark(args.population, args.days)))
+        return
+
+    if args.command == "checkpoint":
+        try:
+            if args.operation == "export":
+                receipt = export_checkpoint(Path(args.db), args.archive)
+            else:
+                receipt = verify_checkpoint(args.archive, args.digest,
+                                            getattr(args, "destination", None))
+            print(json.dumps(receipt))
+        except (OSError, ValueError, KeyError, tarfile.TarError, sqlite3.Error) as error:
+            parser.exit(1, f"{error}\n")
+        return
+
+    if args.command == "proof" and args.proof_command in {"verify", "witness-payload"}:
         try:
             manifest = json.loads(args.manifest.read_text())
-            print(json.dumps(verify_manifest(manifest, args.root, args.event)))
+            if args.proof_command == "verify":
+                print(json.dumps(verify_manifest(manifest, args.root, args.event)))
+            else:
+                sys.stdout.write(encode(witness_payload(manifest, args.root, args.event)))
         except (OSError, ValueError, TypeError) as error:
             parser.exit(1, f"{error}\n")
         return
@@ -512,20 +606,20 @@ def main():
         return
 
     with closing(sqlite3.connect(args.db)) as db:
-        db.execute("PRAGMA foreign_keys = ON")
-        db.execute("CREATE TABLE IF NOT EXISTS world (id INTEGER PRIMARY KEY, state TEXT NOT NULL)")
-        db.execute("CREATE TABLE IF NOT EXISTS birth_draft (id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
-        db.execute("""CREATE TABLE IF NOT EXISTS events (
-            turn INTEGER NOT NULL, position INTEGER NOT NULL, message TEXT NOT NULL,
-            PRIMARY KEY (turn, position)
-        )""")
-
-        migrate(db)
+        initialize_storage(db)
 
         if args.command == "proof":
             try:
-                print(json.dumps(publish_batch(db, args.directory)))
-            except (OSError, ValueError) as error:
+                if args.proof_command == "publish":
+                    result = publish_batch(db, args.directory)
+                elif args.proof_command == "confirm":
+                    with args.signature.open("rb") as stream:
+                        signature = stream.read(65)
+                    result = confirm_batch(db, args.root, signature, public_key_der(args.public_key))
+                else:
+                    result = confirmation_status(db, args.root)
+                print(json.dumps(result))
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 parser.exit(1, f"{error}\n")
         elif args.command in {"draft", "init"}:
             db.execute("BEGIN IMMEDIATE")

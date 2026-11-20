@@ -13,7 +13,8 @@ from event_store import encode
 PUBLIC_EVENTS = {"resident.born", "journey.started", "journey.moved",
                  "site.discovered", "site.seen", "site.studied",
                  "research.started", "research.resumed", "research.experiment",
-                 "research.notebook"}
+                 "research.notebook", "settlement.founded", "institution.formed",
+                 "institution.dissolved", "research.synthesized"}
 
 
 def public_key_der(path):
@@ -45,16 +46,21 @@ def verify_birth(request, signature, priorities):
     resident_id = request["resident_id"]
     if not isinstance(resident_id, str) or str(UUID(resident_id)) != resident_id:
         raise ValueError("Invalid resident ID.")
-    if not isinstance(request["key"], str):
+    verify_signature(request, signature, request["key"])
+    return {"request": request, "signature": base64.b64encode(signature).decode("ascii")}
+
+
+def verify_signature(payload, signature, encoded_key):
+    if not isinstance(encoded_key, str):
         raise ValueError("Invalid public key encoding.")
-    key = base64.b64decode(request["key"], validate=True)
+    key = base64.b64decode(encoded_key, validate=True)
     if (len(signature) != 64 or len(key) != 44
             or not key.startswith(bytes.fromhex("302a300506032b6570032100"))
-            or base64.b64encode(key).decode("ascii") != request["key"]):
+            or base64.b64encode(key).decode("ascii") != encoded_key):
         raise ValueError("Invalid Ed25519 key or signature.")
     with TemporaryDirectory() as root:
         root = Path(root)
-        (root / "request").write_bytes(encode(request).encode("utf-8"))
+        (root / "request").write_bytes(encode(payload).encode("utf-8"))
         (root / "key").write_bytes(key)
         (root / "signature").write_bytes(signature)
         result = subprocess.run(
@@ -63,7 +69,6 @@ def verify_birth(request, signature, priorities):
              "-sigfile", str(root / "signature")], capture_output=True, timeout=5)
     if result.returncode:
         raise ValueError("Creator signature verification failed.")
-    return {"request": request, "signature": base64.b64encode(signature).decode("ascii")}
 
 
 def store_notebooks(db, world):

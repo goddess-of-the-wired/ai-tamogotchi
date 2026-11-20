@@ -442,3 +442,71 @@ the ordered child hashes with prefix byte 1; odd levels duplicate their
 last child. The final digest hashes prefix byte 2, the four-byte big-endian
 event count, and the tree root. Only allowlisted observer events enter these
 batches. The full private event chain stays in the database.
+
+## Verify independent proof confirmation
+
+From the repository root, run
+`python3 -m unittest discover -s tests -p test_roadmap.py -k external_witness -v`.
+The rehearsal copies a published manifest to a separate witness directory,
+verifies that it contains the expected birth and discovery, signs the verified
+payload with a separate Ed25519 key, and imports the receipt twice. It expects
+one confirmation and verifies that an invalid signature fails.
+
+For a manual exchange, give the witness the manifest, trusted root, and
+expected event IDs. On the witness machine, run
+`python3 glitch.py proof witness-payload MANIFEST --root ROOT --event BIRTH_ID --event DISCOVERY_ID`
+and redirect the bytes to a file. Sign that file with
+`openssl pkeyutl -sign -inkey witness.pem -rawin -in payload -out proof.sig`.
+The publisher imports the signature with
+`python3 glitch.py --db world.sqlite3 proof confirm ROOT proof.sig --public-key witness.pub`.
+Check `proof status ROOT` for `confirmed`. Establish witness key trust
+separately. A signed witness confirmation attests to possession and verification
+of the batch. Chain publication and chain finality are future integrations.
+
+## Verify settlements and councils
+
+Run `python3 -m unittest discover -s tests -p test_roadmap.py -k council -v`.
+Two co-located residents harvest, barter with a conserved payment, and vote to
+form a council after repeated social contact. After the members leave, the
+council dissolves and its communal stock remains with the settlement. In an
+IPv4 save, inspect `economy` and resident `inventory` using `status`.
+
+## Verify scientific lineages
+
+Run `python3 -m unittest discover -s tests -p test_roadmap.py -k lineage -v`.
+The seeded rehearsal checks three successive contributors: an original
+experimenter, a peer who uses the notebook, and a reviewer who combines
+terrain and mineral evidence into a bounded site profile. In `status`,
+`scholarship` holds source IDs and the profile, while resident `beliefs` can
+retain a mistaken interpretation. The canonical map remains authoritative.
+
+## Verify a checkpoint replica
+
+Run `python3 -m unittest discover -s tests -p test_roadmap.py -k replica -v`.
+The test copies an archive, advances the origin separately, restores the
+replica, and compares world state and canonical history at the checkpoint.
+
+Export with `python3 glitch.py --db world.sqlite3 checkpoint export backup.tar`.
+Copy that archive to the replica and transfer the reported database digest
+over a separately trusted channel. On the replica, run
+`python3 glitch.py checkpoint verify backup.tar --digest SHA256`, then
+`python3 glitch.py checkpoint restore backup.tar recovered.sqlite3 --digest SHA256`.
+The restore requires a new path. The archive includes private save data,
+so share it only with trusted replicas. A checkpoint is a consistent SQLite
+snapshot with retained events and artifacts. It does not advance a remote
+replica automatically.
+
+## Measure simulation scale and scheduling fidelity
+
+Run `python3 glitch.py benchmark --population 20 --days 30` and repeat with
+100 or 500 residents. The isolated run reports elapsed time, database size,
+snapshot size, canonical event bytes, and local inference calls. The current
+simulation uses deterministic policy and incurs zero external inference calls.
+Timings are machine-dependent. These measurements do not establish sublinear
+scaling.
+
+Run `python3 -m unittest discover -s tests -p test_roadmap.py -k scheduling -v`.
+It compares regional scheduling with and without the reduced solitary path.
+The fidelity target is exact equality of emitted social events and resident
+state for the tested mixed-site fixture. Journeys and research still process
+every simulation day.
