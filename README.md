@@ -346,3 +346,31 @@ Look for research started, experiment, notebook, and resumed lines. Use
 `status` to inspect the notebook authors, source notebook IDs, experiment
 draws, and interpretations. The automated suite also exercises a failed
 assay followed by a successful peer attempt with a mistaken interpretation.
+
+## Verify creator linkage and observer reads
+
+Signed births use Ed25519 and the OpenSSL 3 command-line tools. Run in a
+temporary working directory with an initialized database. The private key
+stays with the creator.
+
+```sh
+openssl genpkey -algorithm ED25519 -out creator.pem
+openssl pkey -in creator.pem -pubout -out creator.pub
+python3 glitch.py --db world.sqlite3 birth-request --public-key creator.pub \
+  --name Robin --priorities loyalty curiosity stability > birth.json
+openssl pkeyutl -sign -inkey creator.pem -rawin -in birth.json -out birth.sig
+python3 glitch.py --db world.sqlite3 birth-admit birth.json birth.sig
+python3 glitch.py --db world.sqlite3 observer status
+python3 glitch.py --db world.sqlite3 observer timeline
+```
+
+Verify that Robin has a certificate and no private traits or seed in the
+observer view. Replaying the request fails. Admission permits one signed
+birth per key and twenty in total per simulation turn. The observer
+interface provides reads only. Trusted local operators still control the
+simulation through the existing commands.
+
+Notebook bytes are stored in SQLite by SHA-256 so backups include them.
+Read or export an artifact with
+`python3 glitch.py --db world.sqlite3 observer artifact DIGEST`. The command
+verifies the hash before emitting the exact bytes.

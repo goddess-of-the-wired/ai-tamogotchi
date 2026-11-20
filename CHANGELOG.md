@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added creator-signed births, a read-only observer CLI, and verified notebook artifacts.
 - Added versioned research hypotheses, staged local experiments, interpretations, and notebooks that peers can use.
 - Added configurable resident populations, daily goals, energy, and persistent social decisions.
 - Added persistent resident journeys, one-edge-per-day movement, and separate terrain observations and surveys.

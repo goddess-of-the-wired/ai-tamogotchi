@@ -5,16 +5,20 @@ import json
 import random
 import secrets
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from event_store import Event, append_events, canonical_history, migrate
+from event_store import Event, append_events, canonical_history, encode, migrate
 from exploration import HOME, ensure_map, explore
 from ip_geography import ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
+from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_status,
+                      public_key_der, read_artifact, store_notebooks, verify_birth)
 from research import advance_research
 from residents import daily_decisions, initialize as initialize_resident
 from storage_backup import backup_database
@@ -62,7 +66,7 @@ def sync_traits(resident):
 def world_view(world, show_hidden):
     if show_hidden:
         return world
-    public = {key: value for key, value in world.items() if key not in {"seed", "residents"}}
+    public = {key: value for key, value in world.items() if key not in {"seed", "residents", "creator_admissions"}}
     public["residents"] = []
     for resident in world["residents"]:
         origin = resident["birth"]
@@ -289,6 +293,7 @@ def step(db, scheduled=False, *, now=None):
         events = advance(world)
         if "clock_policy_version" in world:
             world["last_committed_day"] = world["turn"]
+        store_notebooks(db, world)
         save(db, world)
         append_events(db, world["residents"][0]["birth"]["id"], world["turn"], events)
     for event in events:
@@ -345,6 +350,79 @@ def prepare_birth(db, args):
     return resident, character_sheet(resident)
 
 
+def add_observer_commands(commands):
+    request = commands.add_parser("birth-request", help="generate a request to sign with a creator key")
+    request.add_argument("--name", required=True)
+    request.add_argument("--priorities", required=True, nargs=3, choices=PRIORITIES)
+    request.add_argument("--public-key", required=True, type=Path)
+    admit = commands.add_parser("birth-admit", help="submit a creator-signed birth request")
+    admit.add_argument("request", type=Path)
+    admit.add_argument("signature", type=Path)
+    observer = commands.add_parser("observer", help="read the public view")
+    reads = observer.add_subparsers(dest="view", required=True)
+    reads.add_parser("status")
+    reads.add_parser("map")
+    timeline = reads.add_parser("timeline")
+    timeline.add_argument("--resident")
+    artifact = reads.add_parser("artifact")
+    artifact.add_argument("digest")
+
+
+def read_observer(db, world, args):
+    if args.command == "birth-request":
+        origin = world.get("geography", {}).get("origin", HOME)
+        request = birth_request(world["residents"][0]["birth"]["id"], origin,
+                                args.name.strip(), args.priorities, public_key_der(args.public_key))
+        sys.stdout.write(encode(request))
+    elif args.view == "artifact":
+        sys.stdout.buffer.write(read_artifact(db, args.digest))
+    else:
+        if args.view == "status":
+            view = observer_status(world)
+        elif args.view == "map":
+            view = world["map"]
+        else:
+            view = [event for event in canonical_history(db) if event["type"] in PUBLIC_EVENTS
+                    and (not args.resident or args.resident in event["actor_ids"])]
+        print(json.dumps(view, indent=2))
+
+
+def admit_signed_birth(db, request, certificate):
+    db.execute("BEGIN IMMEDIATE")
+    with db:
+        world = load(db)
+        if world is None:
+            raise ValueError("Initialize the town first.")
+        world_id = world["residents"][0]["birth"]["id"]
+        site = world.get("geography", {}).get("origin", HOME)
+        if request["world_id"] != world_id or request["site"] != site:
+            raise ValueError("Birth request targets another world or origin.")
+        resident_id = request["resident_id"]
+        if any(r["birth"]["id"] == resident_id for r in world["residents"]):
+            raise ValueError("This birth request was already admitted or the ID exists.")
+        turn = world["turn"]
+        admissions = world.setdefault("creator_admissions", {"turn": turn, "keys": []})
+        if admissions["turn"] != turn:
+            admissions.update(turn=turn, keys=[])
+        key = request["key"]
+        if key in admissions["keys"] or len(admissions["keys"]) >= 20:
+            raise ValueError("Signed birth admission limit reached for this turn.")
+        resident = birth(request["name"], request["priorities"], secrets.token_hex(16))
+        resident["birth"].update(id=resident_id, day=turn, site_id=site,
+                                 traits=resident["traits"].copy(), certificate=certificate)
+        initialize_resident(resident)
+        if "geography" in world:
+            initialize_resident_location(resident)
+        world["residents"].append(resident)
+        admissions["keys"].append(key)
+        save(db, world)
+        append_events(db, world_id, turn, [Event(
+            "resident.born", f"{request['name']} joins Crossing with a creator certificate.",
+            (resident_id,), {"certificate": certificate}, site,
+        )])
+    return resident_id
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="glitch.sqlite3")
@@ -375,6 +453,7 @@ def main():
     clock_commands.add_parser("migrate", help="adopt the six-hour policy without advancing a turn")
     run = commands.add_parser("run", help="advance continuously until interrupted")
     run.add_argument("--interval", type=positive, help="advance immediately and repeat at this many seconds for testing")
+    add_observer_commands(commands)
     args = parser.parse_args()
 
     if args.command == "traits":
@@ -387,6 +466,18 @@ def main():
         except (OSError, sqlite3.Error) as error:
             parser.exit(1, f"Backup failed: {error}\n")
         print(f"Backup saved to {args.destination}")
+        return
+
+    if args.command in {"observer", "birth-request"}:
+        try:
+            uri = Path(args.db).resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True)) as db:
+                world = load(db)
+                if world is None:
+                    raise ValueError("Initialize the town first.")
+                read_observer(db, world, args)
+        except (OSError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as error:
+            parser.exit(1, f"{error}\n")
         return
 
     if (args.command == "history" and args.json) or (
@@ -431,6 +522,15 @@ def main():
                 print("Finish with init. Spend up to 6 points (3 per scalar); set up to 2 offered habits.")
             else:
                 print(f"Crossing is ready. Resident ID {player['birth']['id']}")
+        elif args.command == "birth-admit":
+            try:
+                request = load_request(args.request)
+                with args.signature.open("rb") as stream:
+                    signature = stream.read(65)
+                certificate = verify_birth(request, signature, PRIORITIES)
+                print(admit_signed_birth(db, request, certificate))
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                parser.exit(1, f"{error}\n")
         elif args.command == "add-resident":
             db.execute("BEGIN IMMEDIATE")
             with db:
