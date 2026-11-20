@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glitch World Observer</title>
+  <link rel="stylesheet" href="/observer.css">
+  <script src="/observer.js" defer></script>
+</head>
+<body>
+  <header>
+    <p id="world-status" aria-live="polite">Connecting to world</p>
+    <h1>Glitch World</h1>
+    <nav aria-label="Observer sections">
+      <a href="#chronicle">Chronicle</a><a href="#residents">Residents</a>
+      <a href="#map">Map</a><a href="#birth">Create a resident</a>
+    </nav>
+  </header>
+  <main>
+    <section id="chronicle">
+      <div class="section-heading"><h2>Chronicle</h2><button id="refresh" type="button">Refresh</button></div>
+      <p id="digest" aria-live="polite"></p>
+      <label for="timeline">Timeline</label>
+      <select id="timeline"><option value="">All residents</option></select>
+      <ol id="events"></ol>
+      <button id="older-events" type="button" hidden>Earlier events</button>
+    </section>
+    <section id="residents">
+      <h2>Residents</h2>
+      <p>Follow residents to save their timelines on this browser.</p>
+      <ul id="roster"></ul>
+      <button id="more-residents" type="button" hidden>More residents</button>
+    </section>
+    <section id="map">
+      <h2>Discovered map</h2>
+      <details><summary id="origin-title">Origin</summary><pre id="inscription"></pre></details>
+      <ul id="sites"></ul>
+      <button id="more-sites" type="button" hidden>More sites</button>
+    </section>
+    <section id="birth">
+      <h2>Create a resident</h2>
+      <form id="birth-form">
+        <label for="name">Name</label>
+        <input id="name" maxlength="80" required>
+        <div class="priorities">
+          <label>First priority<select class="priority" required></select></label>
+          <label>Second priority<select class="priority" required></select></label>
+          <label>Third priority<select class="priority" required></select></label>
+        </div>
+        <button id="birth-submit" type="submit">Sign birth request</button>
+      </form>
+      <p id="birth-status" role="status"></p>
+    </section>
+  </main>
+</body>
+</html>

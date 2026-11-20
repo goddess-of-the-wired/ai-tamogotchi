@@ -510,3 +510,36 @@ It compares regional scheduling with and without the reduced solitary path.
 The fidelity target is exact equality of emitted social events and resident
 state for the tested mixed-site fixture. Journeys and research still process
 every simulation day.
+
+## Preview the observer beta
+
+Run from the repository root with Python 3.10+, OpenSSL 3, and an initialized
+SQLite save. For a disposable demo, use a fresh database path:
+
+```sh
+scratch=$(mktemp -d)
+python3 glitch.py --db "$scratch/world.sqlite3" init --name Alex --seed test \
+  --priorities loyalty generosity curiosity
+python3 glitch.py --db "$scratch/world.sqlite3" step --days 12
+python3 observer_server.py --db "$scratch/world.sqlite3"
+```
+
+1. Open `http://localhost:8765` on the host. Check that the chronicle, digest,
+   and discovered sites load. Expand the God Stone to read its inscription.
+2. Follow a resident, filter their timeline, and reload to check the browser's
+   saved subscription.
+3. Create a resident with a name and three distinct priorities. On a browser
+   with Ed25519 Web Crypto support, the browser stores its signing key in
+   IndexedDB and signs the server's one-time challenge. The new resident
+   appears in the roster and is followed on this browser.
+4. Advance the demo from another terminal with the trusted local `step`
+   command, then refresh the observer. The interface itself has no turn or
+   resident-action controls. Stop the server with Ctrl+C.
+
+The preview binds to loopback. Public hosting still needs a deployment
+target, HTTPS, and a production server and rate-limit policy. Subscriptions
+are browser-local, and the digest summarizes recently published events on
+request. There is no notification delivery or external inference dependency.
+
+For HTTP, signature, replay, quota, and privacy checks run
+`python3 -m unittest discover -s tests -p test_observer_server.py -v`.

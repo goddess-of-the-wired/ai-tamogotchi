@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added a local observer web beta with browser-signed births, saved follows, timelines, map, and activity digest.
 - Added independent witness signatures and confirmation tracking for published proof batches.
 - Added local production, barter, resident councils, and retained settlement treasuries.
 - Added scientific lineages and resident beliefs distinct from canonical site facts.
