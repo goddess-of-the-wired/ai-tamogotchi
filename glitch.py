@@ -19,6 +19,7 @@ from ip_geography import ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
 from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_status,
                       public_key_der, read_artifact, store_notebooks, verify_birth)
+from public_proofs import publish_batch, verify_manifest
 from research import advance_research
 from residents import daily_decisions, initialize as initialize_resident
 from storage_backup import backup_database
@@ -454,7 +455,23 @@ def main():
     run = commands.add_parser("run", help="advance continuously until interrupted")
     run.add_argument("--interval", type=positive, help="advance immediately and repeat at this many seconds for testing")
     add_observer_commands(commands)
+    proof = commands.add_parser("proof", help="publish or verify public event manifests")
+    proof_commands = proof.add_subparsers(dest="proof_command", required=True)
+    publish = proof_commands.add_parser("publish", help="dry-run publication to a local directory")
+    publish.add_argument("directory", type=Path)
+    verify = proof_commands.add_parser("verify", help="verify a manifest against a trusted root")
+    verify.add_argument("manifest", type=Path)
+    verify.add_argument("--root", required=True)
+    verify.add_argument("--event", action="append", default=[])
     args = parser.parse_args()
+
+    if args.command == "proof" and args.proof_command == "verify":
+        try:
+            manifest = json.loads(args.manifest.read_text())
+            print(json.dumps(verify_manifest(manifest, args.root, args.event)))
+        except (OSError, ValueError, TypeError) as error:
+            parser.exit(1, f"{error}\n")
+        return
 
     if args.command == "traits":
         print(json.dumps(TRAITS, indent=2))
@@ -505,7 +522,12 @@ def main():
 
         migrate(db)
 
-        if args.command in {"draft", "init"}:
+        if args.command == "proof":
+            try:
+                print(json.dumps(publish_batch(db, args.directory)))
+            except (OSError, ValueError) as error:
+                parser.exit(1, f"{error}\n")
+        elif args.command in {"draft", "init"}:
             db.execute("BEGIN IMMEDIATE")
             with db:
                 if load(db) is not None:

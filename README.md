@@ -384,3 +384,48 @@ Ivo's mountain discovery at `172.16.0.51`, a failed classification attempt,
 and Alex continuing from the notebook. Alex's test finds mountain terrain
 but the interpretation is mistaken. The rehearsal checks the observer
 timeline and both artifact hashes on a reopened SQLite backup.
+
+## Verify a public history batch
+
+Use a temporary directory and run these commands from the repository root:
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  python3 glitch.py --db "$db" init --name Alex --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$db" step --days 6 > /dev/null
+  python3 glitch.py --db "$db" proof publish "$scratch/manifests" > "$scratch/receipt.json"
+  python3 - "$scratch/receipt.json" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+receipt = json.loads(Path(sys.argv[1]).read_text())
+manifest = json.loads(Path(receipt["manifest"]).read_text())
+birth = next(event for event in manifest["records"] if event["type"] == "resident.born")
+discovery = next(event for event in manifest["records"] if event["type"] == "site.discovered")
+subprocess.run([sys.executable, "glitch.py", "proof", "verify", receipt["manifest"],
+                "--root", receipt["root"], "--event", birth["event_id"],
+                "--event", discovery["event_id"]], check=True)
+PY
+)
+```
+
+The verifier does not open a database. To verify a shareable manifest, retain
+its root separately and supply the trusted value with `--root`. The local
+dry-run publisher processes at most 64 public events per batch and stores
+immutable files named by root. If publication fails, retry with the same
+directory. The publisher reuses the pending batch even if the world has
+advanced. Publication runs outside the turn transaction. This release has
+only a local dry-run adapter.
+
+Leaves hash canonical event JSON with prefix byte 0. Internal nodes hash
+the ordered child hashes with prefix byte 1; odd levels duplicate their
+last child. The final digest hashes prefix byte 2, the four-byte big-endian
+event count, and the tree root. Only allowlisted observer events enter these
+batches. The full private event chain stays in the database.

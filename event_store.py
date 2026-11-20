@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ def migrate(db):
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version == SCHEMA_VERSION:
         return
-    if version not in (0, 1):
+    if version not in (0, 1, 2):
         raise ValueError(f"Unsupported database schema version: {version}")
     with db:
         db.execute("BEGIN IMMEDIATE")
@@ -43,6 +43,10 @@ def migrate(db):
         )""")
         db.execute("""CREATE TABLE IF NOT EXISTS artifacts (
             digest TEXT PRIMARY KEY, data BLOB NOT NULL
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS proof_batches (
+            root TEXT PRIMARY KEY, manifest TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'published'))
         )""")
         db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
