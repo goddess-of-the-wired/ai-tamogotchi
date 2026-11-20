@@ -32,5 +32,6 @@
 ### Security
 
 ### Bugfixes
+- Prevented idle LAN browser sockets from blocking the observer preview.
 
 ### Performance

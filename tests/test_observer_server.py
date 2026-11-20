@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import socket
 import subprocess
 from ipaddress import IPv4Interface
 from threading import Thread
@@ -8,7 +9,7 @@ from urllib.request import urlopen
 from wsgiref.simple_server import make_server
 
 import test_baseline
-from observer_server import CHALLENGE_LIMIT, ObserverApp
+from observer_server import CHALLENGE_LIMIT, LanObserverServer, ObserverApp
 
 
 class ObserverServerTests(test_baseline.SimulationFixture):
@@ -105,6 +106,20 @@ class ObserverServerTests(test_baseline.SimulationFixture):
                     self.assertIn(b"Ed25519", response.read())
                 with urlopen(base + "/api/map", timeout=3) as response:
                     self.assertEqual(json.load(response)["origin"]["name"], "God Stone")
+            finally:
+                server.shutdown()
+                thread.join(timeout=3)
+
+    def test_idle_connection_does_not_block_a_lan_request(self):
+        with make_server("127.0.0.1", 0, None, server_class=LanObserverServer) as server:
+            port = server.server_port
+            server.set_app(ObserverApp(self.db, port, lan=IPv4Interface("127.0.0.1/8")))
+            thread = Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=2):
+                    with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2) as response:
+                        self.assertFalse(json.load(response)["birth_enabled"])
             finally:
                 server.shutdown()
                 thread.join(timeout=3)

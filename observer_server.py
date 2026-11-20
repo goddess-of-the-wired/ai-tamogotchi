@@ -10,8 +10,9 @@ from collections import Counter
 from contextlib import closing
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs
-from wsgiref.simple_server import make_server
+from wsgiref.simple_server import WSGIServer, make_server
 
 import glitch
 from event_store import encode
@@ -21,6 +22,18 @@ ASSETS = Path(__file__).with_name("observer_web")
 CHALLENGE_TTL = 300
 CHALLENGE_LIMIT = 20
 PAGE_SIZE = 50
+
+
+class LanObserverServer(ThreadingMixIn, WSGIServer):
+    """An idle browser connection cannot block other observer requests."""
+
+    daemon_threads = True
+    request_queue_size = 32
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(5)
+        return connection, address
 
 
 class HTTPError(Exception):
@@ -211,7 +224,8 @@ def main():
         parser.error("The LAN subnet must fit within an RFC 1918 range.")
     app = ObserverApp(args.db, args.port, lan=lan)
     host = str(lan.ip) if lan else "127.0.0.1"
-    with make_server(host, args.port, app) as server:
+    server_class = LanObserverServer if lan else WSGIServer
+    with make_server(host, args.port, app, server_class=server_class) as server:
         print(f"Glitch World observer at http://{host}:{args.port}", flush=True)
         try:
             server.serve_forever()
