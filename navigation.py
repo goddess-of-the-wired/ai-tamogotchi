@@ -90,7 +90,7 @@ def complete_journey(world, resident):
     journey_id = resident["journey_id"]
     resident["journey"] = None
     resident["journey_id"] = None
-    if site in resident["site_studied"]:
+    if site == ORIGIN or site in resident["site_studied"]:
         return Event("journey.completed", f"{name} completes the journey to {site}.",
                      (actor,), {"journey_id": [journey_id, None]}, site)
     cell = world["map"][site]

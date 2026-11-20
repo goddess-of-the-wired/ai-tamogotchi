@@ -15,6 +15,7 @@ from event_store import Event, append_events, canonical_history, migrate
 from exploration import HOME, ensure_map, explore
 from ip_geography import ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
+from research import advance_research
 from residents import daily_decisions, initialize as initialize_resident
 from storage_backup import backup_database
 from traits import BINARY_PROBABILITIES, TRAITS
@@ -258,6 +259,11 @@ def advance(world):
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
         events.extend(advance_journeys(world, expedition_rng))
+
+        def research_roll(key, stage):
+            return rng_for(world["seed"], f"research:{key}:{stage}").randrange(100)
+
+        events.extend(advance_research(world, research_roll))
         return events
     expedition = explore(world, expedition_rng)
     if expedition:

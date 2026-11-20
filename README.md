@@ -318,3 +318,31 @@ Pass `--solo` to omit them. Add residents to either world with `add-resident`.
 Look for both residents, daily goals, energy, memories, and relationships.
 Repeated greetings build familiarity, which can change a later greeting
 into a conversation. The automated suite runs 20 residents for 100 days.
+
+## Verify autonomous research
+
+Residents propose research after surveying an IPv4 site. The prototype
+supports mineral assays and terrain classification. It locks possibility by
+capability, site, and rule version. An experiment and its interpretation run
+on successive days. The durable notebook preserves evidence even when the
+experiment fails. A different resident can read it and make one follow-up
+attempt. Research runs locally with seeded draws and a one-stage-per-day budget.
+
+```sh
+(
+  set -eu
+  scratch=$(mktemp -d)
+  trap 'rm -rf -- "$scratch"' EXIT
+  db="$scratch/world.sqlite3"
+  python3 glitch.py --db "$db" init --name Alex --seed test \
+    --priorities loyalty generosity curiosity
+  python3 glitch.py --db "$db" step --days 32 > /dev/null
+  python3 glitch.py --db "$db" step --days 32 > /dev/null
+  python3 glitch.py --db "$db" history | grep 'records research'
+)
+```
+
+Look for research started, experiment, notebook, and resumed lines. Use
+`status` to inspect the notebook authors, source notebook IDs, experiment
+draws, and interpretations. The automated suite also exercises a failed
+assay followed by a successful peer attempt with a mistaken interpretation.
