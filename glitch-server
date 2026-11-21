@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run a private Glitch world for independently controlled characters."""
 import argparse
+import fcntl
 import json
 import secrets
 import sqlite3
@@ -132,7 +133,11 @@ def serve(directory, port, interval):
     database = directory / DATABASE
     if not database.is_file():
         raise ValueError("Initialize the server directory first.")
-    with closing(sqlite3.connect(database)) as db:
+    with (directory / "server.lock").open("a") as lock, closing(sqlite3.connect(database)) as db:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError("Another agent server is running for this world.") from error
         glitch.initialize_storage(db)
         setup_agent_tables(db)
         controller = AgentTurns(db)

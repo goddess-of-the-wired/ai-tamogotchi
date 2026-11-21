@@ -50,6 +50,14 @@ class AgentConnectionTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as unauthenticated:
                     call("/agent/context")
                 self.assertEqual(unauthenticated.exception.code, 401)
+                unauthenticated.exception.close()
+                duplicate = subprocess.run(
+                    [sys.executable, ROOT / "glitch-server", "serve",
+                     "--directory", directory, "--port", str(port)],
+                    capture_output=True, text=True, timeout=2,
+                )
+                self.assertEqual(duplicate.returncode, 1)
+                self.assertIn("Another agent server", duplicate.stderr)
                 actors = {}
                 for name in ("ivo", "mira"):
                     context = call("/agent/context", name)
@@ -60,6 +68,7 @@ class AgentConnectionTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as invalid:
                     call("/agent/intents", "ivo", {"turn": 1, "action": "move", "target": "8.8.8.8"})
                 self.assertEqual(invalid.exception.code, 400)
+                invalid.exception.close()
 
                 clients = [[sys.executable, ROOT / "glitch-client", "--once", "--server", base,
                             "--token-file", directory / f"{name}.token"] for name in actors]
@@ -85,6 +94,7 @@ class AgentConnectionTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as stale:
                     call("/agent/intents", "ivo", {"turn": 1, "action": "wait", "target": None})
                 self.assertEqual(stale.exception.code, 409)
+                stale.exception.close()
             finally:
                 server.terminate()
                 server.wait(timeout=5)
