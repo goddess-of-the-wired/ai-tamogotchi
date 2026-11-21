@@ -186,7 +186,7 @@ def save(db, world):
     )
 
 
-def advance(world):
+def advance(world, managed=()):
     world["turn"] += 1
     turn = world["turn"]
     rng = rng_for(world["seed"], turn)
@@ -270,7 +270,7 @@ def advance(world):
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
         events.extend(advance_economy(world))
-        events.extend(advance_journeys(world, expedition_rng))
+        events.extend(advance_journeys(world, expedition_rng, managed))
 
         def research_roll(key, stage):
             return rng_for(world["seed"], f"research:{key}:{stage}").randrange(100)
@@ -286,7 +286,7 @@ def advance(world):
     return events
 
 
-def step(db, scheduled=False, *, now=None):
+def step(db, scheduled=False, *, now=None, controller=None):
     db.execute("BEGIN IMMEDIATE")
     with db:
         world = load(db)
@@ -300,7 +300,9 @@ def step(db, scheduled=False, *, now=None):
                 if migrated:
                     save(db, world)
                 return delay
-        events = advance(world)
+        events = advance(world, controller.residents if controller else ())
+        if controller:
+            events.extend(controller.resolve(db, world))
         if "clock_policy_version" in world:
             world["last_committed_day"] = world["turn"]
         store_notebooks(db, world)

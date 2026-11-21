@@ -568,3 +568,8 @@ dice are local code and use no language model.
 
 Run `python3 -m unittest discover -s tests -p test_ecology.py -v` for the
 miss, first discovery, peer revisit, and persistence checks.
+
+## Run independent character agents
+
+See [Run connected Glitch characters](RUN-AGENTS.md) for the server, client,
+LLM policy options, and cross-machine SSH instructions.

@@ -105,10 +105,12 @@ def complete_journey(world, resident):
                  {"site_studied": [None, observation], "journey_id": [journey_id, None]}, site)
 
 
-def advance_journeys(world, rng):
+def advance_journeys(world, rng, managed=()):
     events = []
     idle = []
     for resident in world["residents"]:
+        if resident["birth"]["id"] in managed:
+            continue
         journey = resident["journey"]
         if journey is None:
             idle.append(resident)

@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Run a private Glitch world for independently controlled characters."""
+import argparse
+import json
+import secrets
+import sqlite3
+import sys
+import time
+from contextlib import closing
+from pathlib import Path
+from urllib.parse import parse_qs
+from wsgiref.simple_server import make_server
+
+import glitch
+from agent_protocol import (AgentTurns, character, context_view, digest_token,
+                            setup_agent_tables, validate_intent)
+from event_store import encode
+from observer_server import LanObserverServer
+
+DATABASE = "world.sqlite3"
+
+
+def initialize(directory, seed):
+    directory.mkdir(mode=0o700)
+    with closing(sqlite3.connect(directory / DATABASE)) as db:
+        glitch.initialize_storage(db)
+        setup_agent_tables(db)
+        founder = glitch.birth("Alex", list(glitch.PRIORITIES[:3]), seed)
+        options = argparse.Namespace(spend=[], habit=[], solo=False)
+        with db:
+            glitch.found_town(db, founder, glitch.character_sheet(founder), options)
+            world = glitch.load(db)
+            for resident in world["residents"][1:]:
+                birth = resident["birth"]
+                token = secrets.token_urlsafe(32)
+                path = directory / (birth["name"].lower() + ".token")
+                path.touch(mode=0o600, exist_ok=False)
+                path.write_text(token + "\n", encoding="ascii")
+                db.execute("INSERT INTO agent_keys VALUES (?, ?)", (birth["id"], digest_token(token)))
+    print(f"Created {directory / DATABASE} and separate ivo.token and mira.token files.")
+
+
+class RequestError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+class AgentAPI:
+    def __init__(self, database, port):
+        self.database = database.resolve().as_uri() + "?mode=rw"
+        self.hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
+
+    def dispatch(self, env):
+        if env.get("HTTP_HOST") not in self.hosts:
+            raise RequestError("403 Forbidden", "Use the loopback address or an SSH tunnel.")
+        method, path = env["REQUEST_METHOD"], env["PATH_INFO"]
+        if method == "GET" and path == "/health":
+            with closing(sqlite3.connect(self.database, uri=True)) as db:
+                return {"turn": glitch.load(db)["turn"]}
+        scheme, _, token = env.get("HTTP_AUTHORIZATION", "").partition(" ")
+        if scheme.lower() != "bearer" or not 0 < len(token) <= 128:
+            raise RequestError("401 Unauthorized", "A character token is required.")
+        with closing(sqlite3.connect(self.database, uri=True)) as db:
+            match = db.execute("SELECT resident FROM agent_keys WHERE digest = ?",
+                               (digest_token(token),)).fetchone()
+            if match is None:
+                raise RequestError("401 Unauthorized", "Unknown character token.")
+            actor, = match
+            if method == "POST" and path == "/agent/intents":
+                return self.submit(db, actor, env)
+            if method == "GET" and path == "/agent/context":
+                db.execute("BEGIN")
+                world = glitch.load(db)
+                context = context_view(world, character(world, actor))
+                context["pending"] = db.execute(
+                    "SELECT 1 FROM agent_intents WHERE resident = ? AND turn = ?",
+                    (actor, context["turn"])).fetchone() is not None
+                return context
+            if method == "GET" and path == "/agent/results":
+                params = parse_qs(env.get("QUERY_STRING", ""), max_num_fields=3)
+                after = int(params.get("after", ["0"])[0])
+                if not 0 <= after < 2**63:
+                    raise ValueError("Invalid turn cursor.")
+                return {"results": [json.loads(row[0]) for row in db.execute(
+                    "SELECT result FROM agent_intents WHERE resident = ? AND turn > ? "
+                    "AND result IS NOT NULL ORDER BY turn LIMIT 50", (actor, after))]}
+        raise RequestError("404 Not Found", "Unknown agent route.")
+
+    @staticmethod
+    def submit(db, actor, env):
+        if env.get("CONTENT_TYPE", "").split(";")[0] != "application/json":
+            raise RequestError("415 Unsupported Media Type", "Use JSON.")
+        length = int(env.get("CONTENT_LENGTH") or "0")
+        if not 0 < length <= 4096:
+            raise RequestError("413 Content Too Large", "Invalid request size.")
+        intent = json.loads(env["wsgi.input"].read(length))
+        turn = intent.get("turn") if isinstance(intent, dict) else None
+        if type(turn) is not int or not 0 < turn < 2**63:
+            raise ValueError("Invalid turn.")
+        db.execute("BEGIN IMMEDIATE")
+        with db:
+            previous = db.execute("SELECT intent, result FROM agent_intents WHERE resident=? AND turn=?",
+                                  (actor, turn)).fetchone()
+            if previous:
+                if encode(intent) != previous[0]:
+                    raise RequestError("409 Conflict", "An intent already exists for this turn.")
+                return json.loads(previous[1]) if previous[1] else {"turn": turn, "status": "queued"}
+            world = glitch.load(db)
+            if turn != world["turn"] + 1:
+                raise RequestError("409 Conflict", "Turn is stale or not open.")
+            validate_intent(intent, world, character(world, actor))
+            db.execute("INSERT INTO agent_intents VALUES (?, ?, ?, NULL)", (actor, turn, encode(intent)))
+        return {"turn": turn, "status": "queued"}
+
+    def __call__(self, env, respond):
+        try:
+            data, status = self.dispatch(env), "200 OK"
+        except RequestError as error:
+            data, status = {"error": str(error)}, error.status
+        except (ValueError, TypeError):
+            data, status = {"error": "Invalid request or action for the character context."}, "400 Bad Request"
+        except sqlite3.Error:
+            data, status = {"error": "World database unavailable."}, "503 Service Unavailable"
+        body = encode(data).encode("utf-8")
+        respond(status, [("Content-Type", "application/json"), ("Cache-Control", "no-store"),
+                         ("Content-Length", str(len(body)))])
+        return [body]
+
+
+def serve(directory, port, interval):
+    database = directory / DATABASE
+    if not database.is_file():
+        raise ValueError("Initialize the server directory first.")
+    with closing(sqlite3.connect(database)) as db:
+        glitch.initialize_storage(db)
+        setup_agent_tables(db)
+        controller = AgentTurns(db)
+        if not controller.residents:
+            raise ValueError("This database was not initialized by glitch-server.")
+        with make_server("127.0.0.1", port, AgentAPI(database, port), server_class=LanObserverServer) as server:
+            server.timeout = min(.25, interval)
+            deadline = time.monotonic() + interval
+            print(f"Agent API at http://127.0.0.1:{port}; turn window {interval:g}s", flush=True)
+            while True:
+                server.handle_request()
+                if time.monotonic() >= deadline:
+                    glitch.step(db, controller=controller)
+                    deadline = time.monotonic() + interval
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser("init", help="create a disposable world and two character tokens")
+    init.add_argument("--directory", type=Path, required=True)
+    init.add_argument("--seed", default="connected-agents")
+    run = commands.add_parser("serve", help="start the agent API and demo clock")
+    run.add_argument("--directory", type=Path, required=True)
+    run.add_argument("--port", type=int, default=8770)
+    run.add_argument("--tick-seconds", type=int, default=30)
+    args = parser.parse_args()
+    try:
+        if args.command == "init":
+            initialize(args.directory, args.seed)
+        elif not 1 <= args.tick_seconds <= 86400 or not 1 <= args.port <= 65535:
+            parser.error("Invalid port or turn interval.")
+        else:
+            serve(args.directory, args.port, args.tick_seconds)
+    except KeyboardInterrupt:
+        print("\nServer stopped.", file=sys.stderr)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        parser.exit(1, f"{error}\n")
+
+
+if __name__ == "__main__":
+    main()
