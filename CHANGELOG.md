@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Features
+- Added evolving, trait-weighted immediate and long-term desires, with progress explained in the observer timeline.
+- Added resident journals and retired the connected demo’s hunger mechanic.
 - Added connected resident perception, voluntary speech and trade, homeward travel, hunger, and food from habitat discoveries.
 - Limited scripted social and trade actions to residents without an active client that turn.
 - Added Unix agent and server executables for authenticated intents in a shared demo world.

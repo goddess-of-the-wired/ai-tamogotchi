@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AgentConnectionTests(unittest.TestCase):
     def test_two_executable_clients_and_durable_turn_receipts(self):
+        from runpy import run_path
+
+        demo_policy = run_path(str(ROOT / "glitch-client"))["demo_policy"]
         with TemporaryDirectory() as temporary:
             directory = Path(temporary) / "world"
             subprocess.run([sys.executable, ROOT / "glitch-server", "init",
@@ -59,9 +62,11 @@ class AgentConnectionTests(unittest.TestCase):
                 self.assertEqual(duplicate.returncode, 1)
                 self.assertIn("Another agent server", duplicate.stderr)
                 actors = {}
+                intents = {}
                 for name in ("ivo", "mira"):
                     context = call("/agent/context", name)
                     actors[name] = context["character"]["id"]
+                    intents[name] = {"turn": context["turn"], **demo_policy(context)}
                     self.assertEqual(context["character"]["name"].lower(), name)
                     self.assertNotIn("seed", context["character"])
                 self.assertNotEqual(actors["ivo"], actors["mira"])
@@ -83,13 +88,9 @@ class AgentConnectionTests(unittest.TestCase):
                         time.sleep(.05)
                     self.assertEqual(len(outcomes), 1)
                     self.assertEqual(outcomes[0]["status"], "applied")
-                    self.assertEqual(outcomes[0]["action"], "move")
-                    self.assertIn("journey.moved", outcomes[0]["events"])
-                    with closing(sqlite3.connect(directory / "world.sqlite3")) as db:
-                        intent = json.loads(db.execute(
-                            "SELECT intent FROM agent_intents WHERE resident=? AND turn=1",
-                            (actors[name],)).fetchone()[0])
-                    self.assertEqual(call("/agent/intents", name, intent), outcomes[0])
+                    self.assertEqual(outcomes[0]["action"], intents[name]["action"])
+                    self.assertTrue(outcomes[0]["events"])
+                    self.assertEqual(call("/agent/intents", name, intents[name]), outcomes[0])
 
                 with self.assertRaises(HTTPError) as stale:
                     call("/agent/intents", "ivo", {"turn": 1, "action": "wait", "target": None})
@@ -107,6 +108,7 @@ class AgentConnectionTests(unittest.TestCase):
         from agent_protocol import AgentTurns, context_view
         from event_store import canonical_history
         from ip_geography import GATEWAYS, ORIGIN
+        from observer_server import ObserverApp
 
         server = run_path(str(ROOT / "glitch-server"))
         with TemporaryDirectory() as temporary:
@@ -124,6 +126,7 @@ class AgentConnectionTests(unittest.TestCase):
 
                 world = glitch.load(db)
                 _, mira, ivo = world["residents"]
+                ivo["hunger"] = 4  # Pre-desire saves can still be opened.
                 speaker, listener = (resident["birth"]["id"] for resident in (mira, ivo))
                 mira["inventory"] = {"fiber": 2, "stone": 1}
                 with db:
@@ -131,6 +134,8 @@ class AgentConnectionTests(unittest.TestCase):
                 view = context_view(world, mira)
                 self.assertIn(listener, {peer["id"] for peer in view["peers"]})
                 self.assertLessEqual(len(view["character"]["traits"]), 8)
+                self.assertEqual(set(view["desires"]), {"immediate", "long_term"})
+                self.assertNotIn("hunger", context_view(world, ivo)["character"])
                 text = "I saw fish beyond the gateway."
                 submit(speaker, 1, "say", listener, text=text)
                 controller.last_seen_turn[listener] = 1
@@ -156,13 +161,13 @@ class AgentConnectionTests(unittest.TestCase):
                 glitch.step(db, controller=controller)
                 world = glitch.load(db)
                 self.assertEqual(world["residents"][2]["inventory"]["fiber"], 1)
-                self.assertEqual(world["residents"][2]["hunger"], 3)
+                self.assertNotIn("hunger", world["residents"][2])
                 submit(listener, 4, "buy_food")
                 submit(speaker, 4, "give", listener, item="stone")
                 glitch.step(db, controller=controller)
                 world = glitch.load(db)
                 self.assertEqual(world["residents"][2]["inventory"]["stone"], 1)
-                self.assertEqual(world["residents"][2]["hunger"], 2)
+                self.assertEqual(world["residents"][2]["inventory"]["food"], 1)
 
                 site = GATEWAYS[0]
                 submit(listener, 5, "move", site)
@@ -173,18 +178,59 @@ class AgentConnectionTests(unittest.TestCase):
                 with db:
                     glitch.save(db, world)
                 self.assertIn("honey", context_view(world, ivo)["resources"])
-                with self.assertRaisesRegex(ValueError, "hungry"):
-                    submit(listener, 6, "survey")
                 submit(listener, 6, "gather", "honey")
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
-                self.assertEqual(ivo["inventory"]["honey"], 1)
-                self.assertEqual(ivo["hunger"], 2)
+                self.assertEqual(ivo["inventory"]["honey"], 2)
+                self.assertEqual(ivo["inventory"]["food"], 1)
                 submit(listener, 7, "return_home")
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
                 self.assertEqual(ivo["current_site_ip"], ORIGIN)
-                self.assertEqual(ivo["hunger"], 1)
+                submit(listener, 8, "journal", site)
+                glitch.step(db, controller=controller)
+                ivo = glitch.load(db)["residents"][2]
+                self.assertIn(site, ivo["journal"])
+                history = canonical_history(db)
+                self.assertIn("desire.formed", {event["type"] for event in history})
+                self.assertIn("desire.fulfilled", {event["type"] for event in history})
+                self.assertNotIn("resident.meal", {event["type"] for event in history})
+                timeline = ObserverApp.public_entries(db, listener, 0)
+                self.assertTrue(any(event["type"] == "desire.progressed" for event in timeline))
+                self.assertNotIn(text, json.dumps(timeline))
+
+    def test_traits_choose_different_desires_and_progress_retires_them(self):
+        from desires import active_desires, advance_desires, begin_desires
+        from event_store import Event
+        from ip_geography import GATEWAYS, ORIGIN
+        from traits import TRAITS
+
+        def resident(actor, strong_traits):
+            return {
+                "birth": {"id": actor, "name": actor, "priorities": [], "site_id": ORIGIN},
+                "current_site_ip": ORIGIN, "site_seen": {ORIGIN: {}},
+                "traits": {name: float(name in strong_traits) for name in TRAITS},
+            }
+
+        explorer = resident("Explorer", {"curiosity", "love_of_learning", "persistence"})
+        connector = resident("Connector", {"sociability", "loyalty", "need_for_belonging"})
+        world = {"turn": 0, "residents": [explorer, connector]}
+        self.assertEqual(active_desires(world, explorer)["long_term"]["drive"], "purpose")
+        self.assertEqual(active_desires(world, connector)["long_term"]["drive"], "belonging")
+        list(begin_desires(world))
+        original = explorer["desires"]["long_term"]
+        for day, site in enumerate((GATEWAYS[0], *GATEWAYS), start=1):
+            world["turn"] = day
+            outcome = Event("site.feature_seen", "Explorer noticed a habitat.", ("Explorer",), {}, site)
+            events = list(advance_desires(world, [outcome]))
+            if day == 2:
+                self.assertEqual(len(original["progress"]), 1)
+        self.assertIn("desire.fulfilled", [event.type for event in events])
+        self.assertNotIn("long_term", explorer["desires"])
+        self.assertNotEqual(active_desires(world, explorer)["long_term"]["id"], original["id"])
+        world["turn"] = 12
+        expired = list(advance_desires(world, []))
+        self.assertIn("desire.retired", [event.type for event in expired])
 
     def test_ollama_adapter_requests_json_and_returns_an_intent(self):
         from argparse import Namespace

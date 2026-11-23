@@ -199,7 +199,9 @@ class ObserverApp:
     def public_entries(db, resident, offset):
         if db.execute("PRAGMA user_version").fetchone()[0] == 0:
             return []
-        placeholders = ",".join("?" for _ in PUBLIC_EVENTS)
+        timeline_events = PUBLIC_EVENTS | {"desire.formed", "desire.progressed", "desire.fulfilled",
+                                           "desire.retired"}
+        placeholders = ",".join("?" for _ in timeline_events)
         actor_filter = """AND EXISTS (
             SELECT 1 FROM json_each(e.record, '$.actor_ids') WHERE value = ?
         )""" if resident else ""
@@ -207,7 +209,7 @@ class ObserverApp:
             JOIN events p ON p.turn = e.turn AND p.position = e.position
             WHERE e.type IN ({placeholders}) {actor_filter}
             ORDER BY e.turn DESC, e.position DESC LIMIT ? OFFSET ?""",
-            (*sorted(PUBLIC_EVENTS), *((resident,) if resident else ()), PAGE_SIZE, offset))
+            (*sorted(timeline_events), *((resident,) if resident else ()), PAGE_SIZE, offset))
         return [{"id": record["event_id"], "turn": record["turn"], "type": record["type"],
                  "site": record["site_id"], "actors": record["actor_ids"], "message": message}
                 for encoded, message in matches for record in [json.loads(encoded)]]

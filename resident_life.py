@@ -1,4 +1,4 @@
-"""Food, conversation, and voluntary exchange in connected worlds."""
+"""Local resources, conversation, and voluntary exchange in connected worlds."""
 
 from collections import deque
 
@@ -16,9 +16,12 @@ FEATURE_FOOD = {
 
 
 def home_step(resident):
+    return known_step(resident, resident["birth"]["site_id"])
+
+
+def known_step(resident, destination):
     start = resident["current_site_ip"]
-    home = resident["birth"]["site_id"]
-    if start == home:
+    if start == destination:
         return None
     known = resident["site_seen"]
     frontier = deque([(start, None)])
@@ -26,8 +29,8 @@ def home_step(resident):
     while frontier:
         site, first = frontier.popleft()
         for neighbor in neighbors(site):
-            if neighbor == home:
-                return first or home
+            if neighbor == destination:
+                return first or destination
             if neighbor in known and neighbor not in visited:
                 visited.add(neighbor)
                 frontier.append((neighbor, first or neighbor))
@@ -146,33 +149,8 @@ def apply_action(world, resident, intent):
     return [Event(f"agent.{kind}", message, actors, effects, site)]
 
 
-def feed_residents(world, controlled):
+def expire_offers(world):
     for resident in world["residents"]:
-        stock = resident.setdefault("inventory", {})
-        site = resident["current_site_ip"]
-        if resident.get("trade_offer", {}).get("day", world["turn"] - 2) < world["turn"]:
-            resident.pop("trade_offer", None)
-        meal = next((item for item in sorted(FOOD) if stock.get(item, 0)), None)
-        if meal is None and identity(resident) not in controlled:
-            meal = next((item for item in gatherable(world, resident) if item in FOOD), None)
-            if meal:
-                stock[meal] = 1
-            elif settlement_at(world, site) and resident["savings"]:
-                resident["savings"] -= 1
-                stock["food"] = 1
-                meal = "food"
-        previous = resident.get("hunger", 0)
-        if meal:
-            stock[meal] -= 1
-            resident["hunger"] = max(0, previous - 1)
-        else:
-            resident["hunger"] = min(4, previous + 1)
-        energy = resident["energy"]
-        if resident["hunger"] >= 2:
-            resident["energy"] = max(0, energy - 1)
-        if meal or previous != resident["hunger"] or energy != resident["energy"]:
-            name = resident["birth"]["name"]
-            suffix = f"eats {meal}" if meal else "goes hungry"
-            yield Event("resident.meal", f"{name} {suffix}.", (identity(resident),),
-                        {"meal": meal, "hunger": [previous, resident["hunger"]],
-                         "energy": [energy, resident["energy"]]}, site)
+        offer = resident.get("trade_offer")
+        if offer and offer["day"] < world["turn"]:
+            del resident["trade_offer"]

@@ -2,6 +2,7 @@
 import hashlib
 import json
 
+from desires import active_desires, suggested_action, unrecorded
 from ecology import observe_ecology
 from event_store import Event, encode
 from ip_geography import ORIGIN, neighbors
@@ -11,7 +12,7 @@ from resident_life import (apply_action, gatherable, home_step, offers_at, peers
 from traits import TRAITS
 
 SCOPED_ACTIONS = {"move", "inspect", "survey", "study_notebook", "wait", "say", "give",
-                  "offer_trade", "accept_trade", "gather", "buy_food", "return_home"}
+                  "offer_trade", "accept_trade", "gather", "buy_food", "return_home", "journal"}
 EXTRA_FIELDS = {"say": {"text"}, "give": {"item"}, "offer_trade": {"item"}}
 NO_TARGET = {"wait", "inspect", "survey", "buy_food", "return_home"}
 
@@ -61,11 +62,14 @@ def context_view(world, resident):
     settlements = world.get("economy", {}).get("settlements", {})
     known_settlements = [known for known in resident["site_seen"] if known in settlements]
     step_home = home_step(resident)
+    resources = gatherable(world, resident)
+    desires = {slot: {**desire, "suggested_action": suggested_action(world, resident, desire, resources)}
+               for slot, desire in active_desires(world, resident).items()}
     return {
         "turn": world["turn"] + 1,
         "character": {"id": birth["id"], "name": birth["name"], "priorities": birth["priorities"],
                       "traits": strongest_traits(resident), "goal": resident["goal"],
-                      "energy": resident["energy"], "hunger": resident.get("hunger", 0),
+                      "energy": resident["energy"],
                       "inventory": resident.get("inventory", {}), "savings": resident["savings"]},
         "peers": [{"id": actor, "name": peer["birth"]["name"]}
                   for actor, peer in peers(world, resident).items()],
@@ -74,7 +78,8 @@ def context_view(world, resident):
         "settlements": known_settlements[-12:],
         "at_settlement": bool(settlement_at(world, site)),
         "home": birth["site_id"], "home_step": step_home,
-        "resources": gatherable(world, resident), "offers": offers_at(world, resident),
+        "resources": resources, "offers": offers_at(world, resident),
+        "desires": desires, "journal_candidates": sorted(unrecorded(resident))[-12:],
         "site": site, "terrain": world["map"][site]["terrain"],
         "observation": resident.get("ecology_seen", {}).get(site),
         "surveyed": site in resident["site_studied"], "seen": list(resident["site_seen"])[-30:],
@@ -102,8 +107,8 @@ def validate_intent(intent, world, resident):
         raise ValueError("This action takes no target.")
     if action == "survey" and (site == ORIGIN or site in resident["site_studied"]):
         raise ValueError("Choose a previously unsurveyed ordinary site.")
-    if action == "survey" and resident.get("hunger", 0) >= 3:
-        raise ValueError("Eat before surveying while severely hungry.")
+    if action == "journal" and target not in unrecorded(resident):
+        raise ValueError("Choose an observation you have not recorded in your journal.")
     validate_action(world, resident, intent)
 
 
@@ -130,6 +135,11 @@ def apply_intent(world, resident, intent):
         birth = resident["birth"]
         return [Event("agent.notebook_read", f"{birth['name']} studies a published notebook.",
                       (birth["id"],), {"notebook": target}, site)]
+    if action == "journal":
+        birth = resident["birth"]
+        resident.setdefault("journal", {})[target] = resident["ecology_seen"][target].copy()
+        return [Event("agent.journaled", f"{birth['name']} records an observation about {target}.",
+                      (birth["id"],), {"observation_site": target}, site)]
     if action == "wait":
         resident["energy"] = min(4, resident["energy"] + 1)
         return []

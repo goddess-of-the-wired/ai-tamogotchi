@@ -16,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from checkpoints import export_checkpoint, verify_checkpoint
+from desires import advance_desires, begin_desires
 from economy import advance_economy
 from event_store import Event, append_events, canonical_history, encode, migrate
 from exploration import HOME, ensure_map, explore
@@ -26,7 +27,7 @@ from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_statu
 from public_proofs import (confirmation_status, confirm_batch, publish_batch,
                            verify_manifest, witness_payload)
 from research import advance_research
-from resident_life import feed_residents
+from resident_life import expire_offers
 from residents import daily_decisions, initialize as initialize_resident
 from scholarship import record_scholarship
 from storage_backup import backup_database
@@ -309,9 +310,14 @@ def step(db, scheduled=False, *, now=None, controller=None):
                 return delay
         controlled = controller.controlled(db, world["turn"] + 1) if controller else ()
         if controller:
-            events = advance(world, controller.residents, controlled,
-                             resolve=lambda state: controller.resolve(db, state))
-            events.extend(feed_residents(world, controlled))
+            for resident in world["residents"]:
+                resident.pop("hunger", None)
+            events = list(begin_desires(world))
+            outcomes = advance(world, controller.residents, controlled,
+                               resolve=lambda state: controller.resolve(db, state))
+            events.extend(outcomes)
+            events.extend(advance_desires(world, outcomes))
+            expire_offers(world)
         else:
             events = advance(world)
         if "clock_policy_version" in world:

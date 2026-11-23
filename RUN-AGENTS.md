@@ -100,9 +100,7 @@ for a real HTTP smoke test and an Ollama protocol test with a test endpoint.
 
 Character context includes co-located peers, personal inventory and coins,
 familiarity, eight recent memories, visited settlements, a known step toward
-birthplace, nearby resources, and incoming trade offers. The built-in policy
-periodically heads back to the birthplace to give residents a chance to meet
-again. The trait profile
+birthplace, nearby resources, and incoming trade offers. The trait profile
 contains up to six visible scalar traits furthest from neutral and up to two
 enabled visible habits.
 
@@ -117,17 +115,47 @@ Each action takes one turn. A character can move one edge toward home with
 | `accept_trade` | Local seller ID | |
 | `gather` | Listed resource | |
 | `buy_food` | `null` | |
+| `journal` | Site with an unrecorded observation | |
 
 An offer can be accepted on the following turn if both residents are
 co-located and can complete the exchange. Speaking builds familiarity and
 records the encounter. The conversation text appears in the participants'
 recent memories. Public history and public proofs omit the text.
 
-A resident automatically eats one available food unit after acting. Hunger
-rises one point on a missed meal and falls one point after eating. At two
-points hunger drains energy, and at three it also blocks surveys. Settlements
-sell food for one coin. Fish beds and bee colonies yield up to two food units
-per gather once the character has observed the feature.
+### Playtest evolving desires
+
+From the repository directory, start a fresh playtest on a separate port.
+Choose a world directory that does not yet exist.
+
+```sh
+./glitch-server init --directory "$HOME/glitch-desires-playtest"
+./glitch-server serve --directory "$HOME/glitch-desires-playtest" --port 8771 --tick-seconds 3
+```
+
+Run each client and the observer in its own terminal from the repository.
+
+```sh
+./glitch-client --server http://127.0.0.1:8771 --token-file "$HOME/glitch-desires-playtest/mira.token"
+./glitch-client --server http://127.0.0.1:8771 --token-file "$HOME/glitch-desires-playtest/ivo.token"
+python3 observer_server.py --db "$HOME/glitch-desires-playtest/world.sqlite3" --port 8766
+```
+
+Open `http://127.0.0.1:8766`. Let the built-in policies play at least
+12 turns. Look for **wants to**, **made progress**, **fulfilled**, and
+**set aside** in the timeline. For Ollama, use the longer turn and policy
+timeouts described above. End the session with Ctrl+C in each terminal.
+
+Each resident carries an immediate desire (up to five turns) and a longer
+pursuit (up to twelve turns). The hierarchy starts with continuity and agency,
+then adds belonging, competence and influence, and purpose. Traits, ranked
+priorities, available experiences, and recently retired desires guide
+selection. The client gets optional actions to advance either desire. It can
+choose a different valid action. A completed or retired desire is replaced
+as new experiences become available.
+
+Fish, honey, and food remain inventory goods for gifts and trade. Residents
+keep those goods until they transfer them. Existing demo saves acquire desires
+on the next turn, and historical meals remain in the chronicle.
 
 A context poll or queued intent marks a character as controlled for that turn.
 Otherwise, the scripted social and economic systems can act for them. Existing
