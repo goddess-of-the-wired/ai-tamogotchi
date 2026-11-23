@@ -166,8 +166,10 @@ workshop, settlement founding, and research systems still run in the server.
 ### Watch residents build a village
 
 Start a fresh save using the playtest commands above. Everyone starts at
-the God Stone. It serves as a meeting point until residents build there.
-The built-in clients spend most turns gathering, contributing, or returning
+the God Stone, where the character context shows the inscription. The only
+actions there are `inspect` to read it and `move` to leave. The built-in
+clients head to the meeting point at `192.168.0.0` on their first turn and
+start building there. They spend most later turns gathering, contributing, or returning
 to the project, with some turns reserved for personal desires. With both
 clients running, give them up to 120 turns to reach the village. Follow
 Mira in the timeline to see exactly what she contributed. The observer map
@@ -182,6 +184,5 @@ also shows the site's current stage and the next project's progress.
 | Village | 18 | 2 | The final stage of this playtest, with its community membership carried forward. |
 
 Each successful build turn spends one unit of the terrain's material.
-The God Stone uses fiber. Connected clients can choose other sites to
-build at. The bridge shelter is the prototype’s temporary shelter stage.
+Connected clients can choose other ordinary sites to build at. The bridge shelter is the prototype’s temporary shelter stage.
 The world has no bridge routing or population growth mechanics yet.

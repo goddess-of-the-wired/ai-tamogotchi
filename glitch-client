@@ -35,6 +35,8 @@ def request_json(url, *, token=None, payload=None, timeout=5):
 
 
 def demo_policy(context):
+    if context.get("inscription"):
+        return {"action": "move", "target": context["meeting_point"]}
     construction = context.get("construction_action")
     if construction and context["turn"] % 3 != 0:
         return construction
@@ -67,7 +69,9 @@ def choose(context, args):
             "options": {"num_predict": 160},
             "messages": [
                 {"role": "system", "content": "Play this Glitch World character. "
-                 "Return one JSON object with action and target. Use a listed neighbor for move, "
+                 "Return one JSON object with action and target. At the God Stone use inspect "
+                 "to view the inscription or move to leave. The meeting_point is where others gather. "
+                 "Use only actions listed in the context. Use a listed neighbor for move, "
                  "notebook ID for study_notebook, resource for gather, and local peer ID for say, "
                  "give, offer_trade, or accept_trade. Say adds text (up to 160 characters). Give "
                  "and offer_trade add item from your inventory. Accept only a listed offer. "

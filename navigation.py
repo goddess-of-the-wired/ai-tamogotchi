@@ -6,7 +6,7 @@ from hashlib import sha256
 from ecology import observe_ecology
 from event_store import Event
 from exploration import expedition_weight, terrain_record
-from ip_geography import ORIGIN, coordinates, neighbors
+from ip_geography import MEETING_POINT, ORIGIN, coordinates, neighbors
 
 ROUTE_EDGES = 10
 
@@ -105,14 +105,19 @@ def complete_journey(world, resident):
                  {"site_studied": [None, observation], "journey_id": [journey_id, None]}, site)
 
 
-def advance_journeys(world, rng, managed=()):
+def advance_journeys(world, rng, managed=(), *, depart_origin=False):
     events = []
     idle = []
     for resident in world["residents"]:
         if resident["birth"]["id"] in managed:
             continue
         journey = resident["journey"]
-        if journey is None:
+        if depart_origin and resident["current_site_ip"] == ORIGIN:
+            resident["journey"] = {"path": [ORIGIN, MEETING_POINT], "route_index": 0}
+            resident["journey_id"] = f"{resident['birth']['id']}:{world['turn']}:departure"
+            events.extend(move_resident(world, resident))
+            resident.update(journey=None, journey_id=None)
+        elif journey is None:
             idle.append(resident)
         elif journey["route_index"] < len(journey["path"]) - 1:
             events.extend(move_resident(world, resident))

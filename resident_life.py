@@ -4,7 +4,7 @@ from collections import deque
 
 from economy import RESOURCE_BY_TERRAIN, identity
 from event_store import Event
-from ip_geography import neighbors
+from ip_geography import MEETING_POINT, ORIGIN, neighbors
 
 FOOD = {"food", "fish", "honey"}
 ITEMS = set(RESOURCE_BY_TERRAIN.values()) | FOOD
@@ -15,8 +15,13 @@ FEATURE_FOOD = {
 }
 
 
+def built_home(resident):
+    home = resident.get("home_site")
+    return home if home != ORIGIN else None
+
+
 def home_step(resident):
-    return known_step(resident, resident.get("home_site", resident["birth"]["site_id"]))
+    return known_step(resident, built_home(resident) or MEETING_POINT)
 
 
 def known_step(resident, destination):
@@ -44,6 +49,8 @@ def peers(world, resident):
 
 def gatherable(world, resident):
     site = resident["current_site_ip"]
+    if site == ORIGIN:
+        return []
     terrain = world["map"][site]["terrain"]
     items = {RESOURCE_BY_TERRAIN.get(terrain, "stone")}
     if terrain in {"grassland", "forest", "origin"}:
@@ -56,6 +63,8 @@ def gatherable(world, resident):
 
 
 def settlement_at(world, site):
+    if site == ORIGIN:
+        return None
     return world.get("economy", {}).get("settlements", {}).get(site)
 
 

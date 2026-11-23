@@ -2,7 +2,8 @@
 
 from economy import RESOURCE_BY_TERRAIN, identity
 from event_store import Event
-from resident_life import home_step
+from ip_geography import MEETING_POINT, ORIGIN
+from resident_life import built_home, home_step
 
 # Each stage takes fresh materials and a separate contribution from each required builder.
 STAGES = (
@@ -15,6 +16,8 @@ STAGES = (
 
 
 def project_view(world, site):
+    if site == ORIGIN:
+        return {"stage": None, "next_stage": None, "members": 0}
     project = world.get("construction", {}).get(site, {})
     completed = project.get("completed", 0)
     stage = STAGES[completed - 1][0] if completed else None
@@ -22,14 +25,14 @@ def project_view(world, site):
     if completed == len(STAGES):
         return {**summary, "next_stage": None}
     name, cost, builders = STAGES[completed]
-    return {**summary, "next_stage": name, "material": RESOURCE_BY_TERRAIN.get(world["map"][site]["terrain"], "stone"),
+    return {**summary, "next_stage": name, "material": RESOURCE_BY_TERRAIN.get(world["map"].get(site, {}).get("terrain"), "stone"),
             "required": cost, "contributed": project.get("contributed", 0),
             "builders_required": builders, "builders": sorted(project.get("builders", []))}
 
 
 def construction_action(world, resident):
     site = resident["current_site_ip"]
-    home = resident.get("home_site", resident["birth"]["site_id"])
+    home = built_home(resident) or MEETING_POINT
     view = project_view(world, home)
     if view["next_stage"] is None:
         return None
@@ -88,7 +91,8 @@ def build(world, resident, stage):
     if stage in {"bridge shelter", "shelter"}:
         for peer in world["residents"]:
             if identity(peer) in builders:
-                peer.setdefault("home_site", site)
+                if built_home(peer) is None:
+                    peer["home_site"] = site
     events.append(Event("construction.completed", f"Residents finish the {stage} at {site}.",
                         builders, {"stage": stage}, site))
     if stage in {"community", "village"}:

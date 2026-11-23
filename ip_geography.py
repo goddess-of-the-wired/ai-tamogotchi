@@ -9,6 +9,7 @@ MAPPING_VERSION = 1
 TOPOLOGY_VERSION = 1
 REGIONS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 GATEWAYS = tuple(str(IPv4Network(region).network_address) for region in REGIONS)
+MEETING_POINT = GATEWAYS[0]
 EDGE_COST_QUARTERS = 1
 
 INSCRIPTION = """This place is a message.

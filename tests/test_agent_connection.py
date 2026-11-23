@@ -107,7 +107,8 @@ class AgentConnectionTests(unittest.TestCase):
         import glitch
         from agent_protocol import AgentTurns, context_view
         from event_store import canonical_history
-        from ip_geography import GATEWAYS, ORIGIN
+        from exploration import terrain_record
+        from ip_geography import MEETING_POINT, coordinates, neighbors
         from observer_server import ObserverApp
 
         server = run_path(str(ROOT / "glitch-server"))
@@ -125,6 +126,11 @@ class AgentConnectionTests(unittest.TestCase):
                     })
 
                 world = glitch.load(db)
+                world["map"][MEETING_POINT] = terrain_record(
+                    world["seed"], MEETING_POINT, *coordinates(MEETING_POINT), 0, None)
+                for resident in world["residents"]:
+                    resident["current_site_ip"] = MEETING_POINT
+                    resident["site_seen"][MEETING_POINT] = {}
                 _, mira, ivo = world["residents"]
                 ivo["hunger"] = 4  # Pre-desire saves can still be opened.
                 speaker, listener = (resident["birth"]["id"] for resident in (mira, ivo))
@@ -170,12 +176,12 @@ class AgentConnectionTests(unittest.TestCase):
                 world = glitch.load(db)
                 self.assertEqual(world["residents"][2]["inventory"]["stone"], 1)
 
-                site = GATEWAYS[0]
+                site = next(iter(neighbors(MEETING_POINT)))
                 submit(listener, 5, "move", site)
                 glitch.step(db, controller=controller)
                 world = glitch.load(db)
                 ivo = world["residents"][2]
-                ivo["ecology_seen"][site] = {"day": 5, "label": world["site_features"][site]["label"]}
+                ivo["ecology_seen"][site] = {"day": 5, "label": "a colony of ground-nesting bees"}
                 with db:
                     glitch.save(db, world)
                 self.assertIn("honey", context_view(world, ivo)["resources"])
@@ -186,7 +192,7 @@ class AgentConnectionTests(unittest.TestCase):
                 submit(listener, 7, "return_home")
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
-                self.assertEqual(ivo["current_site_ip"], ORIGIN)
+                self.assertEqual(ivo["current_site_ip"], MEETING_POINT)
                 submit(listener, 8, "journal", site)
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
@@ -202,13 +208,13 @@ class AgentConnectionTests(unittest.TestCase):
     def test_traits_choose_different_desires_and_progress_retires_them(self):
         from desires import active_desires, advance_desires, begin_desires
         from event_store import Event
-        from ip_geography import GATEWAYS, ORIGIN
+        from ip_geography import GATEWAYS, MEETING_POINT
         from traits import TRAITS
 
         def resident(actor, strong_traits):
             return {
-                "birth": {"id": actor, "name": actor, "priorities": [], "site_id": ORIGIN},
-                "current_site_ip": ORIGIN, "site_seen": {ORIGIN: {}},
+                "birth": {"id": actor, "name": actor, "priorities": [], "site_id": MEETING_POINT},
+                "current_site_ip": MEETING_POINT, "site_seen": {MEETING_POINT: {}},
                 "traits": {name: float(name in strong_traits) for name in TRAITS},
             }
 
@@ -241,7 +247,7 @@ class AgentConnectionTests(unittest.TestCase):
         from agent_protocol import AgentTurns, context_view, validate_intent
         from construction import STAGES, project_view, validate_build
         from event_store import canonical_history, encode
-        from ip_geography import ORIGIN
+        from ip_geography import MEETING_POINT, ORIGIN
 
         server = run_path(str(ROOT / "glitch-server"))
         demo_policy = run_path(str(ROOT / "glitch-client"))["demo_policy"]
@@ -251,9 +257,17 @@ class AgentConnectionTests(unittest.TestCase):
             with closing(sqlite3.connect(directory / "world.sqlite3")) as db:
                 controller = AgentTurns(db)
                 world = glitch.load(db)
-                self.assertIsNone(context_view(world, world["residents"][1])["home"])
-                with self.assertRaisesRegex(ValueError, "Gather"):
-                    validate_build(world, world["residents"][1], "bridge shelter")
+                mira = world["residents"][1]
+                context = context_view(world, mira)
+                self.assertIsNone(context["home"])
+                self.assertEqual(context["actions"], ["inspect", "move"])
+                self.assertTrue(context["inscription"])
+                self.assertFalse(context["peers"])
+                validate_intent({"turn": 1, "action": "inspect", "target": None}, world, mira)
+                with self.assertRaisesRegex(ValueError, "only read"):
+                    validate_intent({"turn": 1, "action": "gather", "target": "fiber"}, world, mira)
+                with self.assertRaisesRegex(ValueError, "current stage"):
+                    validate_build(world, mira, "bridge shelter")
                 for turn in range(1, 121):
                     with db:
                         for resident in world["residents"][1:]:
@@ -263,7 +277,7 @@ class AgentConnectionTests(unittest.TestCase):
                                        (resident["birth"]["id"], turn, encode(intent)))
                     glitch.step(db, controller=controller)
                     world = glitch.load(db)
-                    view = project_view(world, ORIGIN)
+                    view = project_view(world, MEETING_POINT)
                     if turn == 1:
                         self.assertFalse(world["economy"]["settlements"])
                     if view["stage"] == "village":
@@ -276,7 +290,12 @@ class AgentConnectionTests(unittest.TestCase):
                 founding = [event for event in history if event["type"] == "settlement.founded"]
                 self.assertEqual([event["turn"] for event in founding], [completed[2]["turn"]])
                 self.assertTrue(all(len(set(event["actor_ids"])) >= 2 for event in completed[2:]))
-                self.assertEqual(world["residents"][1]["home_site"], ORIGIN)
+                self.assertEqual(world["residents"][1]["home_site"], MEETING_POINT)
+                self.assertNotIn(ORIGIN, world["construction"])
+                self.assertFalse(any(event["site_id"] == ORIGIN and
+                                     event["type"].startswith(("resident.greet", "resident.share",
+                                                               "construction.", "economy.", "settlement."))
+                                     for event in history))
                 self.assertEqual(sum(event["type"] == "construction.contributed" for event in history),
                                  sum(cost for _, cost, _ in STAGES))
 

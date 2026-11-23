@@ -6,15 +6,16 @@ from construction import build, construction_action, project_view, validate_buil
 from desires import active_desires, suggested_action, unrecorded
 from ecology import observe_ecology
 from event_store import Event, encode
-from ip_geography import ORIGIN, neighbors
+from ip_geography import MEETING_POINT, ORIGIN, neighbors
 from navigation import complete_journey, move_resident
-from resident_life import (apply_action, gatherable, home_step, offers_at, peers,
+from resident_life import (apply_action, built_home, gatherable, home_step, offers_at, peers,
                            settlement_at, validate_action)
 from traits import TRAITS
 
 SCOPED_ACTIONS = {"move", "inspect", "survey", "study_notebook", "wait", "say", "give",
                   "offer_trade", "accept_trade", "gather", "buy_food", "return_home", "journal", "build"}
 EXTRA_FIELDS = {"say": {"text"}, "give": {"item"}, "offer_trade": {"item"}}
+STONE_ACTIONS = {"inspect", "move"}
 NO_TARGET = {"wait", "inspect", "survey", "buy_food", "return_home"}
 
 
@@ -61,11 +62,12 @@ def context_view(world, resident):
     birth = resident["birth"]
     site = resident["current_site_ip"]
     settlements = world.get("economy", {}).get("settlements", {})
-    known_settlements = [known for known in resident["site_seen"] if known in settlements]
+    at_stone = site == ORIGIN
+    known_settlements = [known for known in resident["site_seen"] if known != ORIGIN and known in settlements]
     step_home = home_step(resident)
     resources = gatherable(world, resident)
     desires = {slot: {**desire, "suggested_action": suggested_action(world, resident, desire, resources)}
-               for slot, desire in active_desires(world, resident).items()}
+               for slot, desire in active_desires(world, resident).items()} if not at_stone else {}
     return {
         "turn": world["turn"] + 1,
         "character": {"id": birth["id"], "name": birth["name"], "priorities": birth["priorities"],
@@ -73,20 +75,22 @@ def context_view(world, resident):
                       "energy": resident["energy"],
                       "inventory": resident.get("inventory", {}), "savings": resident["savings"]},
         "peers": [{"id": actor, "name": peer["birth"]["name"]}
-                  for actor, peer in peers(world, resident).items()],
+                  for actor, peer in peers(world, resident).items()] if not at_stone else [],
         "relationships": resident.get("relationships", {}),
         "memories": resident.get("memories", [])[-8:],
         "settlements": known_settlements[-12:],
         "at_settlement": bool(settlement_at(world, site)),
-        "home": resident.get("home_site"), "meeting_point": birth["site_id"], "home_step": step_home,
-        "construction": project_view(world, site), "construction_action": construction_action(world, resident),
-        "resources": resources, "offers": offers_at(world, resident),
-        "desires": desires, "journal_candidates": sorted(unrecorded(resident))[-12:],
+        "home": built_home(resident), "meeting_point": MEETING_POINT, "home_step": step_home,
+        "inscription": world["map"][site].get("inscription") if at_stone else None,
+        "construction": project_view(world, site),
+        "construction_action": None if at_stone else construction_action(world, resident),
+        "resources": resources, "offers": {} if at_stone else offers_at(world, resident),
+        "desires": desires, "journal_candidates": [] if at_stone else sorted(unrecorded(resident))[-12:],
         "site": site, "terrain": world["map"][site]["terrain"],
         "observation": resident.get("ecology_seen", {}).get(site),
         "surveyed": site in resident["site_studied"], "seen": list(resident["site_seen"])[-30:],
-        "neighbors": list(neighbors(site)), "notebooks": available_notebooks(world, resident)[-10:],
-        "actions": sorted(SCOPED_ACTIONS),
+        "neighbors": list(neighbors(site)), "notebooks": [] if at_stone else available_notebooks(world, resident)[-10:],
+        "actions": sorted(STONE_ACTIONS if at_stone else SCOPED_ACTIONS),
     }
 
 
@@ -101,6 +105,8 @@ def validate_intent(intent, world, resident):
     if target is not None and (not isinstance(target, str) or len(target) > 160):
         raise ValueError("Invalid target.")
     site = resident["current_site_ip"]
+    if site == ORIGIN and action not in STONE_ACTIONS:
+        raise ValueError("At the God Stone, you may only read the inscription or leave.")
     if action == "move" and target not in neighbors(site):
         raise ValueError("Move target must be an adjacent site.")
     if action == "study_notebook" and target not in {n["id"] for n in available_notebooks(world, resident)}:
@@ -186,6 +192,8 @@ class AgentTurns:
                     "events": [event.type for event in resolved],
                     "observation": resident.get("ecology_seen", {}).get(resident["current_site_ip"]),
                 }
+                if intent["action"] == "inspect" and outcome["site"] == ORIGIN:
+                    outcome["inscription"] = world["map"][ORIGIN]["inscription"]
             receipt = {"turn": turn, "action": intent["action"], "status": status, **outcome}
             encoded = encode(intent)
             if intent["action"] == "say":

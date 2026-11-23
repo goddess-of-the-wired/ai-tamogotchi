@@ -104,6 +104,8 @@ def desire_event(resident, slot, desire, kind, explanation):
 
 def begin_desires(world):
     for resident in world["residents"]:
+        if resident["current_site_ip"] == ORIGIN:
+            continue
         previous = resident.get("desires", {})
         active = active_desires(world, resident)
         resident["desires"] = active
@@ -117,7 +119,7 @@ def begin_desires(world):
 def advance_desires(world, events):
     for resident in world["residents"]:
         actor = resident["birth"]["id"]
-        for slot, desire in list(resident["desires"].items()):
+        for slot, desire in list(resident.get("desires", {}).items()):
             drive = desire["drive"]
             expected = DRIVES[drive][-1]
             for event in events:

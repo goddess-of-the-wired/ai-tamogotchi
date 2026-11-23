@@ -20,7 +20,7 @@ from desires import advance_desires, begin_desires
 from economy import advance_economy
 from event_store import Event, append_events, canonical_history, encode, migrate
 from exploration import HOME, ensure_map, explore
-from ip_geography import ORIGIN, initialize_geography, validate_geography
+from ip_geography import MEETING_POINT, ORIGIN, initialize_geography, validate_geography
 from navigation import advance_journeys, initialize_resident_location
 from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_status,
                       public_key_der, read_artifact, store_notebooks, verify_birth)
@@ -206,7 +206,7 @@ def advance(world, managed=(), controlled=(), *, resolve=None):
     crew = (lead,) if mechanic is lead else (lead, mechanic)
     applicant = next((r for r in population if r not in crew and r["role"] == "resident"), None)
 
-    home = world.get("geography", {}).get("origin", HOME)
+    home = MEETING_POINT if resolve is not None else world.get("geography", {}).get("origin", HOME)
 
     def record(kind, message, actors, effects, *, site_id=home, cause_type=None):
         events.append(Event(kind, message, tuple(r["birth"]["id"] for r in actors),
@@ -261,7 +261,8 @@ def advance(world, managed=(), controlled=(), *, resolve=None):
                (applicant,), {"role": ["resident", "apprentice"]}, cause_type="workshop.reopened")
     else:
         local = [r for r in population if not managed or r.get("current_site_ip", home) == home
-                 or r.get("current_site_ip") in world.get("economy", {}).get("settlements", {})]
+                 or (r.get("current_site_ip") != ORIGIN
+                     and r.get("current_site_ip") in world.get("economy", {}).get("settlements", {}))]
         workers = [r for r in local if r["role"] != "resident"] or local
         if workers:
             worker = rng.choice(workers)
@@ -272,13 +273,14 @@ def advance(world, managed=(), controlled=(), *, resolve=None):
             message = (f"A traveling merchant pays {name} 3 for a rush order." if consequential
                        else f"{name} finishes a paid shift and saves 1.")
             record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
-    events.extend(daily_decisions(world, home, controlled=controlled))
+    events.extend(daily_decisions(world, home, controlled=controlled,
+                                  excluded_site=ORIGIN if resolve is not None else None))
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
         events.extend(advance_economy(world, controlled, resident_built=resolve is not None))
         if resolve:
             events.extend(resolve(world))
-        events.extend(advance_journeys(world, expedition_rng, managed))
+        events.extend(advance_journeys(world, expedition_rng, managed, depart_origin=resolve is not None))
 
         def research_roll(key, stage):
             return rng_for(world["seed"], f"research:{key}:{stage}").randrange(100)

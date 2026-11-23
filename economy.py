@@ -3,6 +3,7 @@
 from collections import defaultdict
 
 from event_store import Event
+from ip_geography import ORIGIN
 
 RESOURCE_BY_TERRAIN = {
     "origin": "fiber", "grassland": "fiber", "forest": "fiber", "mountain": "stone",
@@ -21,6 +22,8 @@ def advance_economy(world, controlled=(), *, resident_built=False):
     economy = world.setdefault("economy", {"settlements": {}, "institutions": {}})
     day = world["turn"]
     for site, group in groups.items():
+        if resident_built and site == ORIGIN:
+            continue
         material = RESOURCE_BY_TERRAIN.get(world["map"][site]["terrain"], "stone")
         fallback = [r for r in group if identity(r) not in controlled]
         for resident in fallback:
@@ -74,6 +77,8 @@ def advance_economy(world, controlled=(), *, resident_built=False):
                         tuple(council["members"]), {**council, "contribution": material}, site)
 
     for site, council in list(economy["institutions"].items()):
+        if resident_built and site == ORIGIN:
+            continue
         occupants = {identity(r) for r in groups.get(site, ())}
         if occupants.intersection(council["members"]):
             council["last_quorum"] = day

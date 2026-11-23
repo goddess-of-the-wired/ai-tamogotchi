@@ -189,7 +189,7 @@ class ObserverApp:
                     site = cell["id"]
                     if site in features:
                         cell["finding"] = features[site]["label"]
-                    if site in projects:
+                    if site in projects and site != origin:
                         view = project_view(world, site)
                         cell["construction"] = {key: value for key, value in view.items()
                                                 if key != "builders"}
