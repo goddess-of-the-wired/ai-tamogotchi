@@ -220,7 +220,8 @@ class AgentConnectionTests(unittest.TestCase):
 
         explorer = resident("Explorer", {"curiosity", "love_of_learning", "persistence"})
         connector = resident("Connector", {"sociability", "loyalty", "need_for_belonging"})
-        world = {"turn": 0, "residents": [explorer, connector]}
+        world = {"turn": 0, "residents": [explorer, connector],
+                 "map": {MEETING_POINT: {"terrain": "grassland"}}}
         self.assertEqual(active_desires(world, explorer)["long_term"]["drive"], "purpose")
         self.assertEqual(active_desires(world, connector)["long_term"]["drive"], "belonging")
         list(begin_desires(world))
@@ -268,10 +269,17 @@ class AgentConnectionTests(unittest.TestCase):
                     validate_intent({"turn": 1, "action": "gather", "target": "fiber"}, world, mira)
                 with self.assertRaisesRegex(ValueError, "current stage"):
                     validate_build(world, mira, "bridge shelter")
-                for turn in range(1, 121):
+                personal_actions = set()
+                for turn in range(1, 301):
                     with db:
                         for resident in world["residents"][1:]:
-                            intent = {"turn": turn, **demo_policy(context_view(world, resident))}
+                            context = context_view(world, resident)
+                            intent = {"turn": turn, **demo_policy(context)}
+                            if intent["action"] == "build":
+                                self.assertTrue(any(desire.get("project_stage") == intent["target"]
+                                                    for desire in context["desires"].values()))
+                            if intent["action"] in {"say", "journal", "inspect", "survey"}:
+                                personal_actions.add(intent["action"])
                             validate_intent(intent, world, resident)
                             db.execute("INSERT INTO agent_intents VALUES (?, ?, ?, NULL)",
                                        (resident["birth"]["id"], turn, encode(intent)))
@@ -283,6 +291,7 @@ class AgentConnectionTests(unittest.TestCase):
                     if view["stage"] == "village":
                         break
                 self.assertEqual(view["stage"], "village")
+                self.assertTrue(personal_actions)
                 history = canonical_history(db)
                 completed = [event for event in history if event["type"] == "construction.completed"]
                 self.assertEqual([event["effects"]["stage"] for event in completed],

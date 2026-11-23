@@ -169,10 +169,13 @@ Start a fresh save using the playtest commands above. Everyone starts at
 the God Stone, where the character context shows the inscription. The only
 actions there are `inspect` to read it and `move` to leave. The built-in
 clients head to the meeting point at `192.168.0.0` on their first turn and
-start building there. They spend most later turns gathering, contributing, or returning
-to the project, with some turns reserved for personal desires. With both
-clients running, give them up to 120 turns to reach the village. Follow
-Mira in the timeline to see exactly what she contributed. The observer map
+look for somewhere to establish a home. Residents who value security or
+attachment to place can take up a shelter as an agency desire. After a
+shelter exists, residents with ties to others can take up civic projects
+as belonging desires. These compete with exploration, journaling, and
+relationships. Follow Mira in the timeline to see which projects she
+chooses and what she contributes. The seeded rehearsal can take more
+than 120 turns to reach the village. The observer map
 also shows the site's current stage and the next project's progress.
 
 | Stage | Material units | Different builders needed | Result |

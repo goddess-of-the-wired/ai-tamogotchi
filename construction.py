@@ -2,8 +2,8 @@
 
 from economy import RESOURCE_BY_TERRAIN, identity
 from event_store import Event
-from ip_geography import MEETING_POINT, ORIGIN
-from resident_life import built_home, home_step
+from ip_geography import ORIGIN
+from resident_life import built_home, known_step
 
 # Each stage takes fresh materials and a separate contribution from each required builder.
 STAGES = (
@@ -30,14 +30,14 @@ def project_view(world, site):
             "builders_required": builders, "builders": sorted(project.get("builders", []))}
 
 
-def construction_action(world, resident):
+def construction_action(world, resident, target):
     site = resident["current_site_ip"]
-    home = built_home(resident) or MEETING_POINT
-    view = project_view(world, home)
+    view = project_view(world, target)
     if view["next_stage"] is None:
         return None
-    if site != home:
-        return {"action": "return_home", "target": None} if home_step(resident) else None
+    if site != target:
+        step = known_step(resident, target)
+        return {"action": "move", "target": step} if step else None
     if remaining_for(resident, view) <= 0:
         return None
     material = view["material"]

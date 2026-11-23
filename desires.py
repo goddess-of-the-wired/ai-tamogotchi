@@ -1,8 +1,9 @@
 """Persistent, trait-weighted pursuits grounded in actions the world can verify."""
 
+from construction import construction_action, project_view
 from event_store import Event
-from ip_geography import ORIGIN, neighbors
-from resident_life import home_step, known_step, peers
+from ip_geography import MEETING_POINT, ORIGIN, neighbors
+from resident_life import built_home, home_step, known_step, peers
 
 # A soft hierarchy. Lower needs can gain urgency without gating higher ones.
 DRIVES = {
@@ -16,9 +17,14 @@ DRIVES = {
                    "complete surveys", "site.studied"),
     "influence": (4, ("power_motivation", "recognition_seeking", "generosity"), "generosity",
                   "give useful supplies to", "agent.gave"),
+    "shelter": (2, ("desire_for_security", "self_determination", "attachment_to_place"), "stability",
+                "build", "construction.completed"),
+    "civic": (3, ("cooperativeness", "need_for_belonging", "leadership"), "generosity",
+              "help build", "construction.completed"),
     "purpose": (5, ("curiosity", "love_of_learning", "persistence"), "curiosity",
                 "discover what lives in unfamiliar places", "agent.finding"),
 }
+BUILDING_DRIVES = {"shelter", "civic"}
 SLOTS = {"immediate": (1, 5), "long_term": (3, 12)}
 
 
@@ -43,6 +49,8 @@ def propose(world, resident, slot, other=None):
     site = resident["current_site_ip"]
     unknown_life = [place for place in (site, *neighbors(site))
                     if place != ORIGIN and place not in resident.get("ecology_seen", {})]
+    base = built_home(resident) or MEETING_POINT
+    project = project_view(world, base)
     for drive, (level, traits, priority, description, _) in DRIVES.items():
         if other is not None and other["drive"] == drive:
             continue
@@ -51,6 +59,17 @@ def propose(world, resident, slot, other=None):
         if drive == "continuity" and not observations:
             continue
         target = None
+        stage = None
+        if drive in BUILDING_DRIVES:
+            stage = project["next_stage"]
+            if slot != "long_term" or not stage:
+                continue
+            if (stage in {"bridge shelter", "shelter"}) != (drive == "shelter"):
+                continue
+            if drive == "civic" and not contacts:
+                continue
+            target = base
+            description = f"{description} the {stage} at {base}"
         if drive in {"belonging", "influence"}:
             familiarity = resident.get("relationships", {})
             person = min(contacts, key=lambda contact: (
@@ -75,14 +94,22 @@ def propose(world, resident, slot, other=None):
             score += min(0.24, 0.04 * (day - last_contact))
         if drive == "agency" and len(resident["site_seen"]) < 3:
             score += 0.12
+        if drive == "shelter":
+            # A place to return to matters more after several turns without one.
+            score += min(0.38, 0.18 + 0.025 * day) if not built_home(resident) else 0.17
+        if drive == "civic":
+            score += 0.22 + 0.18 * project["contributed"] / project["required"]
         recent = resident.get("desire_history", {}).get(slot, {}).get(drive)
         if recent is not None:
             score -= max(0, 0.65 - (day - recent) * 0.11)
-        candidates.append((score, drive, level, description, target))
-    _, drive, level, description, target = max(candidates, key=lambda row: (row[0], row[1]))
-    return {"id": f"{slot}:{day}", "drive": drive, "level": level, "description": description,
-            "target": target, "started": day, "expires": day + lifespan - 1,
-            "required": count, "progress": []}
+        candidates.append((score, drive, level, description, target, stage))
+    _, drive, level, description, target, stage = max(candidates, key=lambda row: (row[0], row[1]))
+    desire = {"id": f"{slot}:{day}", "drive": drive, "level": level, "description": description,
+              "target": target, "started": day, "expires": day + lifespan - 1,
+              "required": count, "progress": []}
+    if stage:
+        desire.update(project_stage=stage, required=1, expires=day + 12 + 6 * project["required"])
+    return desire
 
 
 def active_desires(world, resident):
@@ -123,13 +150,16 @@ def advance_desires(world, events):
             drive = desire["drive"]
             expected = DRIVES[drive][-1]
             for event in events:
+                shared = drive == "belonging" or drive in BUILDING_DRIVES
                 if not event.actor_ids or (event.actor_ids[0] != actor and
-                                           not (drive == "belonging" and actor in event.actor_ids)):
+                                           not (shared and actor in event.actor_ids)):
                     continue
                 matches = event.type == expected
                 if expected == "agent.finding":
                     matches = event.type in {"site.feature_discovered", "site.feature_seen"}
                 if not matches:
+                    continue
+                if drive in BUILDING_DRIVES and event.effects["stage"] != desire["project_stage"]:
                     continue
                 target = desire["target"]
                 if drive in {"belonging", "influence"}:
@@ -150,7 +180,9 @@ def advance_desires(world, events):
                     break
             if len(desire["progress"]) >= desire["required"]:
                 kind, verb = "fulfilled", "fulfilled the desire"
-            elif world["turn"] >= desire["expires"]:
+            elif (world["turn"] >= desire["expires"] or
+                  (drive in BUILDING_DRIVES and project_view(world, desire["target"])["next_stage"]
+                   != desire["project_stage"])):
                 kind, verb = "retired", "set aside the desire"
             else:
                 continue
@@ -164,6 +196,10 @@ def suggested_action(world, resident, desire, resources):
     site = resident["current_site_ip"]
     known = resident["site_seen"]
     target = desire["target"]
+    if drive in BUILDING_DRIVES:
+        if project_view(world, target)["next_stage"] != desire["project_stage"]:
+            return None
+        return construction_action(world, resident, target)
     if drive == "continuity" and unrecorded(resident):
         return {"action": "journal", "target": target or min(unrecorded(resident))}
     if drive == "purpose" and target:

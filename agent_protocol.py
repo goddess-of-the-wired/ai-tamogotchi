@@ -2,7 +2,7 @@
 import hashlib
 import json
 
-from construction import build, construction_action, project_view, validate_build
+from construction import build, project_view, validate_build
 from desires import active_desires, suggested_action, unrecorded
 from ecology import observe_ecology
 from event_store import Event, encode
@@ -83,7 +83,6 @@ def context_view(world, resident):
         "home": built_home(resident), "meeting_point": MEETING_POINT, "home_step": step_home,
         "inscription": world["map"][site].get("inscription") if at_stone else None,
         "construction": project_view(world, site),
-        "construction_action": None if at_stone else construction_action(world, resident),
         "resources": resources, "offers": {} if at_stone else offers_at(world, resident),
         "desires": desires, "journal_candidates": [] if at_stone else sorted(unrecorded(resident))[-12:],
         "site": site, "terrain": world["map"][site]["terrain"],

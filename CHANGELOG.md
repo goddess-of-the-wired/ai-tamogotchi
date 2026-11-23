@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Made construction optional in the built-in policy. Shelter and civic projects compete with other desires as agency and belonging needs.
 - Made the God Stone an inscription-only stop in connected worlds and moved the default construction site to the first gateway.
 - Added resident-built homes and five cooperative construction stages through village, visible on the observer map and timeline.
 - Added evolving, trait-weighted immediate and long-term desires, with progress explained in the observer timeline.
