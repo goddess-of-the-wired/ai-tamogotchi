@@ -280,7 +280,7 @@ def advance(world, managed=(), controlled=(), *, resolve=None):
         events.extend(advance_economy(world, controlled, resident_built=resolve is not None))
         if resolve:
             events.extend(resolve(world))
-        events.extend(advance_journeys(world, expedition_rng, managed, depart_origin=resolve is not None))
+        events.extend(advance_journeys(world, expedition_rng, managed, reflect_at_origin=resolve is not None))
 
         def research_roll(key, stage):
             return rng_for(world["seed"], f"research:{key}:{stage}").randrange(100)

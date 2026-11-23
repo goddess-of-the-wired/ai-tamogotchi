@@ -224,6 +224,9 @@ class AgentConnectionTests(unittest.TestCase):
                  "map": {MEETING_POINT: {"terrain": "grassland"}}}
         self.assertEqual(active_desires(world, explorer)["long_term"]["drive"], "purpose")
         self.assertEqual(active_desires(world, connector)["long_term"]["drive"], "belonging")
+        builder = resident("Builder", {"desire_for_security", "self_determination", "attachment_to_place"})
+        shelter = active_desires(world, builder)["long_term"]
+        self.assertEqual((shelter["drive"], shelter["level"]), ("shelter", 1))
         list(begin_desires(world))
         original = explorer["desires"]["long_term"]
         for day, site in enumerate((GATEWAYS[0], *GATEWAYS), start=1):
@@ -238,6 +241,49 @@ class AgentConnectionTests(unittest.TestCase):
         world["turn"] = 12
         expired = list(advance_desires(world, []))
         self.assertIn("desire.retired", [event.type for event in expired])
+
+    def test_resident_can_reread_the_stone_and_pick_any_gateway(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from random import Random
+        from runpy import run_path
+
+        import glitch
+        from agent_protocol import AgentTurns, context_view, validate_intent
+        from event_store import encode
+        from ip_geography import GATEWAYS, ORIGIN
+        from navigation import stone_choice
+
+        with TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
+            directory = Path(temporary) / "world"
+            run_path(str(ROOT / "glitch-server"))["initialize"](directory, "stone-choice")
+            with closing(sqlite3.connect(directory / "world.sqlite3")) as db:
+                controller = AgentTurns(db)
+                world = glitch.load(db)
+                mira = world["residents"][1]
+                actor = mira["birth"]["id"]
+                rng = Random("stone-choices")
+                self.assertEqual({stone_choice(mira, rng) for _ in range(100)}, {None, *GATEWAYS})
+                for turn, target in enumerate((None, None, GATEWAYS[-1]), 1):
+                    context = context_view(world, mira)
+                    self.assertEqual(context["site"], ORIGIN)
+                    self.assertEqual(set(context["neighbors"]), set(GATEWAYS))
+                    self.assertFalse(context["desires"])
+                    intent = {"turn": turn, "action": "move" if target else "inspect", "target": target}
+                    validate_intent(intent, world, mira)
+                    with db:
+                        db.execute("INSERT INTO agent_intents VALUES (?, ?, ?, NULL)",
+                                   (actor, turn, encode(intent)))
+                    glitch.step(db, controller=controller)
+                    result = json.loads(db.execute("SELECT result FROM agent_intents WHERE resident=? AND turn=?",
+                                                   (actor, turn)).fetchone()[0])
+                    world = glitch.load(db)
+                    mira = world["residents"][1]
+                    self.assertEqual(result["status"], "applied")
+                    self.assertEqual(mira["current_site_ip"], target or ORIGIN)
+                    if target is None:
+                        self.assertEqual(result["inscription"], context["inscription"])
+                self.assertTrue(context_view(world, mira)["desires"])
 
     def test_builtin_clients_build_a_village_in_stages(self):
         from contextlib import redirect_stdout

@@ -1,13 +1,14 @@
 """Turn-scoped character context, action validation, and durable receipts."""
 import hashlib
 import json
+from random import Random
 
 from construction import build, project_view, validate_build
 from desires import active_desires, suggested_action, unrecorded
 from ecology import observe_ecology
 from event_store import Event, encode
 from ip_geography import MEETING_POINT, ORIGIN, neighbors
-from navigation import complete_journey, move_resident
+from navigation import complete_journey, move_resident, stone_choice
 from resident_life import (apply_action, built_home, gatherable, home_step, offers_at, peers,
                            settlement_at, validate_action)
 from traits import TRAITS
@@ -66,6 +67,8 @@ def context_view(world, resident):
     known_settlements = [known for known in resident["site_seen"] if known != ORIGIN and known in settlements]
     step_home = home_step(resident)
     resources = gatherable(world, resident)
+    departure = (stone_choice(resident, Random(f"{birth['seed']}:{world['turn']}:stone"))
+                 if at_stone else None)
     desires = {slot: {**desire, "suggested_action": suggested_action(world, resident, desire, resources)}
                for slot, desire in active_desires(world, resident).items()} if not at_stone else {}
     return {
@@ -82,6 +85,8 @@ def context_view(world, resident):
         "at_settlement": bool(settlement_at(world, site)),
         "home": built_home(resident), "meeting_point": MEETING_POINT, "home_step": step_home,
         "inscription": world["map"][site].get("inscription") if at_stone else None,
+        "stone_suggestion": ({"action": "move", "target": departure} if departure else
+                             {"action": "inspect", "target": None}) if at_stone else None,
         "construction": project_view(world, site),
         "resources": resources, "offers": {} if at_stone else offers_at(world, resident),
         "desires": desires, "journal_candidates": [] if at_stone else sorted(unrecorded(resident))[-12:],

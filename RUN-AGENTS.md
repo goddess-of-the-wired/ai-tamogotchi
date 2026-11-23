@@ -147,8 +147,10 @@ Open `http://127.0.0.1:8766`. Let the built-in policies play at least
 timeouts described above. End the session with Ctrl+C in each terminal.
 
 Each resident carries an immediate desire (up to five turns) and a longer
-pursuit (up to twelve turns). The hierarchy starts with continuity and agency,
-then adds belonging, competence and influence, and purpose. Traits, ranked
+pursuit (typically up to twelve turns, with more time for construction).
+The hierarchy starts with shelter and continuity, then moves through agency,
+belonging, competence and influence, and purpose. Lower needs exert more
+pressure and compete with higher needs. Traits, ranked
 priorities, available experiences, and recently retired desires guide
 selection. The client gets optional actions to advance either desire. It can
 choose a different valid action. A completed or retired desire is replaced
@@ -167,10 +169,11 @@ workshop, settlement founding, and research systems still run in the server.
 
 Start a fresh save using the playtest commands above. Everyone starts at
 the God Stone, where the character context shows the inscription. The only
-actions there are `inspect` to read it and `move` to leave. The built-in
-clients head to the meeting point at `192.168.0.0` on their first turn and
-look for somewhere to establish a home. Residents who value security or
-attachment to place can take up a shelter as an agency desire. After a
+actions there are `inspect` to read it again and stay, and `move` to leave
+for any listed private gateway. The built-in clients weigh these choices
+using their traits. The first gateway, `192.168.0.0`, is a suggested
+rendezvous. Residents who value security or attachment to place may
+prioritize shelter, a foundational need alongside continuity. After a
 shelter exists, residents with ties to others can take up civic projects
 as belonging desires. These compete with exploration, journaling, and
 relationships. Follow Mira in the timeline to see which projects she

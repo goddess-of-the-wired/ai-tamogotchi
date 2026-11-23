@@ -1,5 +1,7 @@
 """Persistent, trait-weighted pursuits grounded in actions the world can verify."""
 
+from random import Random
+
 from construction import construction_action, project_view
 from event_store import Event
 from ip_geography import MEETING_POINT, ORIGIN, neighbors
@@ -17,7 +19,7 @@ DRIVES = {
                    "complete surveys", "site.studied"),
     "influence": (4, ("power_motivation", "recognition_seeking", "generosity"), "generosity",
                   "give useful supplies to", "agent.gave"),
-    "shelter": (2, ("desire_for_security", "self_determination", "attachment_to_place"), "stability",
+    "shelter": (1, ("desire_for_security", "self_determination", "attachment_to_place"), "stability",
                 "build", "construction.completed"),
     "civic": (3, ("cooperativeness", "need_for_belonging", "leadership"), "generosity",
               "help build", "construction.completed"),
@@ -103,10 +105,10 @@ def propose(world, resident, slot, other=None):
         if recent is not None:
             score -= max(0, 0.65 - (day - recent) * 0.11)
         candidates.append((score, drive, level, description, target, stage))
-    _, drive, level, description, target, stage = max(candidates, key=lambda row: (row[0], row[1]))
+    strength, drive, level, description, target, stage = max(candidates, key=lambda row: (row[0], row[1]))
     desire = {"id": f"{slot}:{day}", "drive": drive, "level": level, "description": description,
               "target": target, "started": day, "expires": day + lifespan - 1,
-              "required": count, "progress": []}
+              "required": count, "progress": [], "strength": round(strength, 3)}
     if stage:
         desire.update(project_stage=stage, required=1, expires=day + 12 + 6 * project["required"])
     return desire
@@ -222,11 +224,13 @@ def suggested_action(world, resident, desire, resources):
     if drive == "competence" and site != ORIGIN and site not in resident["site_studied"]:
         return {"action": "survey", "target": None}
     if drive == "purpose" and site != ORIGIN and site not in resident.get("ecology_seen", {}):
-        if (world["turn"] - desire["started"]) % 2 == 0:
+        curiosity = resident["traits"].get("curiosity", 0.5)
+        draw = Random(f"{world['seed']}:{resident['birth']['name']}:{world['turn']}:inspect").random()
+        if draw < 0.35 + 0.5 * curiosity:
             return {"action": "inspect", "target": None}
     nearby = list(neighbors(site))
     options = [site for site in nearby if site not in known] or nearby
     if options:
-        index = (world["turn"] + len(resident["birth"]["name"])) % len(options)
-        return {"action": "move", "target": options[index]}
+        rng = Random(f"{world['seed']}:{resident['birth']['name']}:{world['turn']}:explore")
+        return {"action": "move", "target": rng.choice(options)}
     return None

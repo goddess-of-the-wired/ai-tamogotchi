@@ -105,18 +105,31 @@ def complete_journey(world, resident):
                  {"site_studied": [None, observation], "journey_id": [journey_id, None]}, site)
 
 
-def advance_journeys(world, rng, managed=(), *, depart_origin=False):
+def stone_choice(resident, rng):
+    """A resident may reflect again or choose any outward gateway."""
+    traits = resident["traits"]
+    reflect = 0.3 + traits.get("contemplativeness", 0.5)
+    explore = 0.3 + traits.get("curiosity", 0.5) + traits.get("adventurousness", 0.5)
+    options = [None, *neighbors(ORIGIN)]
+    weights = [reflect, *(explore * (2 if target == MEETING_POINT else 1)
+                          for target in options[1:])]
+    return rng.choices(options, weights)[0]
+
+
+def advance_journeys(world, rng, managed=(), *, reflect_at_origin=False):
     events = []
     idle = []
     for resident in world["residents"]:
         if resident["birth"]["id"] in managed:
             continue
         journey = resident["journey"]
-        if depart_origin and resident["current_site_ip"] == ORIGIN:
-            resident["journey"] = {"path": [ORIGIN, MEETING_POINT], "route_index": 0}
-            resident["journey_id"] = f"{resident['birth']['id']}:{world['turn']}:departure"
-            events.extend(move_resident(world, resident))
-            resident.update(journey=None, journey_id=None)
+        if reflect_at_origin and resident["current_site_ip"] == ORIGIN:
+            target = stone_choice(resident, rng)
+            if target is not None:
+                resident["journey"] = {"path": [ORIGIN, target], "route_index": 0}
+                resident["journey_id"] = f"{resident['birth']['id']}:{world['turn']}:departure"
+                events.extend(move_resident(world, resident))
+                resident.update(journey=None, journey_id=None)
         elif journey is None:
             idle.append(resident)
         elif journey["route_index"] < len(journey["path"]) - 1:
