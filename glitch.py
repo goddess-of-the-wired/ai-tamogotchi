@@ -26,6 +26,7 @@ from observer import (PUBLIC_EVENTS, birth_request, load_request, observer_statu
 from public_proofs import (confirmation_status, confirm_batch, publish_batch,
                            verify_manifest, witness_payload)
 from research import advance_research
+from resident_life import feed_residents
 from residents import daily_decisions, initialize as initialize_resident
 from scholarship import record_scholarship
 from storage_backup import backup_database
@@ -95,6 +96,8 @@ def world_view(world, show_hidden):
                 },
             },
             "traits": visible,
+            "memories": [{key: value for key, value in memory.items() if key != "text"}
+                         for memory in resident.get("memories", [])],
         })
     return public
 
@@ -186,7 +189,7 @@ def save(db, world):
     )
 
 
-def advance(world, managed=()):
+def advance(world, managed=(), controlled=(), *, resolve=None):
     world["turn"] += 1
     turn = world["turn"]
     rng = rng_for(world["seed"], turn)
@@ -256,20 +259,24 @@ def advance(world, managed=()):
         record("resident.job_assigned", f"{applicant['birth']['name']} takes the apprenticeship created by the workshop repair.",
                (applicant,), {"role": ["resident", "apprentice"]}, cause_type="workshop.reopened")
     else:
-        worker = rng.choice([r for r in population if r["role"] != "resident"] or population)
-        savings = worker["savings"]
-        if consequential:
-            worker["savings"] += 3
-            message = f"A traveling merchant pays {worker['birth']['name']} 3 for a rush order."
-        else:
-            worker["savings"] += 1
-            message = f"{worker['birth']['name']} finishes a paid shift and saves 1."
-        record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
-
-    events.extend(daily_decisions(world, home))
+        local = [r for r in population if not managed or r.get("current_site_ip", home) == home
+                 or r.get("current_site_ip") in world.get("economy", {}).get("settlements", {})]
+        workers = [r for r in local if r["role"] != "resident"] or local
+        if workers:
+            worker = rng.choice(workers)
+            savings = worker["savings"]
+            coins = 3 if consequential else 1
+            worker["savings"] += coins
+            name = worker["birth"]["name"]
+            message = (f"A traveling merchant pays {name} 3 for a rush order." if consequential
+                       else f"{name} finishes a paid shift and saves 1.")
+            record("resident.savings_changed", message, (worker,), {"savings": [savings, worker["savings"]]})
+    events.extend(daily_decisions(world, home, controlled=controlled))
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
-        events.extend(advance_economy(world))
+        events.extend(advance_economy(world, controlled))
+        if resolve:
+            events.extend(resolve(world))
         events.extend(advance_journeys(world, expedition_rng, managed))
 
         def research_roll(key, stage):
@@ -300,9 +307,13 @@ def step(db, scheduled=False, *, now=None, controller=None):
                 if migrated:
                     save(db, world)
                 return delay
-        events = advance(world, controller.residents if controller else ())
+        controlled = controller.controlled(db, world["turn"] + 1) if controller else ()
         if controller:
-            events.extend(controller.resolve(db, world))
+            events = advance(world, controller.residents, controlled,
+                             resolve=lambda state: controller.resolve(db, state))
+            events.extend(feed_residents(world, controlled))
+        else:
+            events = advance(world)
         if "clock_policy_version" in world:
             world["last_committed_day"] = world["turn"]
         store_notebooks(db, world)

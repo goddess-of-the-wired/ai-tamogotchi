@@ -95,3 +95,40 @@ server owns its clock.
 
 Run `python3 -m unittest discover -s tests -p test_agent_connection.py -v`
 for a real HTTP smoke test and an Ollama protocol test with a test endpoint.
+
+## Resident life playtest
+
+Character context includes co-located peers, personal inventory and coins,
+familiarity, eight recent memories, visited settlements, a known step toward
+birthplace, nearby resources, and incoming trade offers. The built-in policy
+periodically heads back to the birthplace to give residents a chance to meet
+again. The trait profile
+contains up to six visible scalar traits furthest from neutral and up to two
+enabled visible habits.
+
+Each action takes one turn. A character can move one edge toward home with
+`return_home` and a null target. Other new policy outputs include:
+
+| Action | Target | Additional field |
+| --- | --- | --- |
+| `say` | Local peer ID | `text`, up to 160 printable characters |
+| `give` | Local peer ID | `item`, one unit from your inventory |
+| `offer_trade` | Local peer ID | `item`, one unit offered for one coin |
+| `accept_trade` | Local seller ID | |
+| `gather` | Listed resource | |
+| `buy_food` | `null` | |
+
+An offer can be accepted on the following turn if both residents are
+co-located and can complete the exchange. Speaking builds familiarity and
+records the encounter. The conversation text appears in the participants'
+recent memories. Public history and public proofs omit the text.
+
+A resident automatically eats one available food unit after acting. Hunger
+rises one point on a missed meal and falls one point after eating. At two
+points hunger drains energy, and at three it also blocks surveys. Settlements
+sell food for one coin. Fish beds and bee colonies yield up to two food units
+per gather once the character has observed the feature.
+
+A context poll or queued intent marks a character as controlled for that turn.
+Otherwise, the scripted social and economic systems can act for them. Existing
+workshop, settlement founding, and research systems still run in the server.

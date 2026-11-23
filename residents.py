@@ -21,8 +21,9 @@ def regional_groups(residents, home):
         yield from sites.items()
 
 
-def daily_decisions(world, home, *, reduced=True):
+def daily_decisions(world, home, *, reduced=True, controlled=()):
     for site, group in regional_groups(world["residents"], home):
+        group = [r for r in group if r["birth"]["id"] not in controlled]
         if reduced and len(group) == 1:
             resident = group[0]
             energy = resident["energy"]

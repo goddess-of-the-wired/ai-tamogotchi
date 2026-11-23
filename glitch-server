@@ -13,7 +13,7 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 import glitch
-from agent_protocol import (AgentTurns, character, context_view, digest_token,
+from agent_protocol import (AgentTurns, character, context_view, digest_token, intent_matches,
                             setup_agent_tables, validate_intent)
 from event_store import encode
 from observer_server import LanObserverServer
@@ -48,8 +48,9 @@ class RequestError(Exception):
 
 
 class AgentAPI:
-    def __init__(self, database, port):
+    def __init__(self, database, port, controller):
         self.database = database.resolve().as_uri() + "?mode=rw"
+        self.controller = controller
         self.hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
 
     def dispatch(self, env):
@@ -74,6 +75,7 @@ class AgentAPI:
                 db.execute("BEGIN")
                 world = glitch.load(db)
                 context = context_view(world, character(world, actor))
+                self.controller.last_seen_turn[actor] = context["turn"]
                 context["pending"] = db.execute(
                     "SELECT 1 FROM agent_intents WHERE resident = ? AND turn = ?",
                     (actor, context["turn"])).fetchone() is not None
@@ -104,7 +106,7 @@ class AgentAPI:
             previous = db.execute("SELECT intent, result FROM agent_intents WHERE resident=? AND turn=?",
                                   (actor, turn)).fetchone()
             if previous:
-                if encode(intent) != previous[0]:
+                if not intent_matches(intent, previous[0]):
                     raise RequestError("409 Conflict", "An intent already exists for this turn.")
                 return json.loads(previous[1]) if previous[1] else {"turn": turn, "status": "queued"}
             world = glitch.load(db)
@@ -143,7 +145,7 @@ def serve(directory, port, interval):
         controller = AgentTurns(db)
         if not controller.residents:
             raise ValueError("This database was not initialized by glitch-server.")
-        with make_server("127.0.0.1", port, AgentAPI(database, port), server_class=LanObserverServer) as server:
+        with make_server("127.0.0.1", port, AgentAPI(database, port, controller), server_class=LanObserverServer) as server:
             server.timeout = min(.25, interval)
             deadline = time.monotonic() + interval
             print(f"Agent API at http://127.0.0.1:{port}; turn window {interval:g}s", flush=True)

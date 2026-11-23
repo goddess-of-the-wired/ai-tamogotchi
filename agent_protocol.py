@@ -6,8 +6,23 @@ from ecology import observe_ecology
 from event_store import Event, encode
 from ip_geography import ORIGIN, neighbors
 from navigation import complete_journey, move_resident
+from resident_life import (apply_action, gatherable, home_step, offers_at, peers,
+                           settlement_at, validate_action)
+from traits import TRAITS
 
-SCOPED_ACTIONS = {"move", "inspect", "survey", "study_notebook", "wait"}
+SCOPED_ACTIONS = {"move", "inspect", "survey", "study_notebook", "wait", "say", "give",
+                  "offer_trade", "accept_trade", "gather", "buy_food", "return_home"}
+EXTRA_FIELDS = {"say": {"text"}, "give": {"item"}, "offer_trade": {"item"}}
+NO_TARGET = {"wait", "inspect", "survey", "buy_food", "return_home"}
+
+
+def strongest_traits(resident):
+    traits = resident["traits"]
+    visible = [key for key in traits if key in TRAITS and TRAITS[key]["visibility"] == "visible"]
+    scalars = sorted((key for key in visible if type(traits[key]) is not bool),
+                     key=lambda key: (-abs(traits[key] - 0.5), key))
+    habits = sorted(key for key in visible if traits[key] is True)
+    return {key: traits[key] for key in (*scalars[:6], *habits[:2])}
 
 
 def setup_agent_tables(db):
@@ -25,6 +40,11 @@ def digest_token(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def intent_matches(intent, stored):
+    encoded = encode(intent)
+    return stored == encoded or stored == "sha256:" + digest_token(encoded)
+
+
 def character(world, actor):
     return next(r for r in world["residents"] if r["birth"]["id"] == actor)
 
@@ -38,10 +58,23 @@ def available_notebooks(world, resident):
 def context_view(world, resident):
     birth = resident["birth"]
     site = resident["current_site_ip"]
+    settlements = world.get("economy", {}).get("settlements", {})
+    known_settlements = [known for known in resident["site_seen"] if known in settlements]
+    step_home = home_step(resident)
     return {
         "turn": world["turn"] + 1,
         "character": {"id": birth["id"], "name": birth["name"], "priorities": birth["priorities"],
-                      "traits": resident["traits"], "goal": resident["goal"], "energy": resident["energy"]},
+                      "traits": strongest_traits(resident), "goal": resident["goal"],
+                      "energy": resident["energy"], "hunger": resident.get("hunger", 0),
+                      "inventory": resident.get("inventory", {}), "savings": resident["savings"]},
+        "peers": [{"id": actor, "name": peer["birth"]["name"]}
+                  for actor, peer in peers(world, resident).items()],
+        "relationships": resident.get("relationships", {}),
+        "memories": resident.get("memories", [])[-8:],
+        "settlements": known_settlements[-12:],
+        "at_settlement": bool(settlement_at(world, site)),
+        "home": birth["site_id"], "home_step": step_home,
+        "resources": gatherable(world, resident), "offers": offers_at(world, resident),
         "site": site, "terrain": world["map"][site]["terrain"],
         "observation": resident.get("ecology_seen", {}).get(site),
         "surveyed": site in resident["site_studied"], "seen": list(resident["site_seen"])[-30:],
@@ -51,11 +84,13 @@ def context_view(world, resident):
 
 
 def validate_intent(intent, world, resident):
-    if not isinstance(intent, dict) or set(intent) != {"turn", "action", "target"}:
+    if not isinstance(intent, dict) or not {"turn", "action", "target"} <= intent.keys():
         raise ValueError("Expected turn, action, and target fields.")
     turn, action, target = intent["turn"], intent["action"], intent["target"]
     if type(turn) is not int or not 0 < turn < 2**63 or not isinstance(action, str) or action not in SCOPED_ACTIONS:
         raise ValueError("Invalid turn or action.")
+    if set(intent) != {"turn", "action", "target"} | EXTRA_FIELDS.get(action, set()):
+        raise ValueError("Unexpected or missing fields for this action.")
     if target is not None and (not isinstance(target, str) or len(target) > 160):
         raise ValueError("Invalid target.")
     site = resident["current_site_ip"]
@@ -63,16 +98,21 @@ def validate_intent(intent, world, resident):
         raise ValueError("Move target must be an adjacent site.")
     if action == "study_notebook" and target not in {n["id"] for n in available_notebooks(world, resident)}:
         raise ValueError("Notebook must be available at the current site.")
-    if action in {"wait", "inspect", "survey"} and target is not None:
+    if action in NO_TARGET and target is not None:
         raise ValueError("This action takes no target.")
     if action == "survey" and (site == ORIGIN or site in resident["site_studied"]):
         raise ValueError("Choose a previously unsurveyed ordinary site.")
+    if action == "survey" and resident.get("hunger", 0) >= 3:
+        raise ValueError("Eat before surveying while severely hungry.")
+    validate_action(world, resident, intent)
 
 
 def apply_intent(world, resident, intent):
     action, target = intent["action"], intent["target"]
     site = resident["current_site_ip"]
-    if action == "move":
+    if action in {"move", "return_home"}:
+        if action == "return_home":
+            target = home_step(resident)
         resident.update(journey_id=f"{resident['birth']['id']}:{world['turn']}:agent",
                         journey={"path": [site, target], "destination": target, "route_index": 0})
         events = move_resident(world, resident)
@@ -90,21 +130,34 @@ def apply_intent(world, resident, intent):
         birth = resident["birth"]
         return [Event("agent.notebook_read", f"{birth['name']} studies a published notebook.",
                       (birth["id"],), {"notebook": target}, site)]
-    return []
+    if action == "wait":
+        resident["energy"] = min(4, resident["energy"] + 1)
+        return []
+    return apply_action(world, resident, intent)
 
 
 class AgentTurns:
     def __init__(self, db):
+        self.last_seen_turn = {}
         self.residents = frozenset(row[0] for row in db.execute("SELECT resident FROM agent_keys"))
+
+    def controlled(self, db, turn):
+        polling = {actor for actor in self.residents if self.last_seen_turn.get(actor) == turn}
+        queued = {row[0] for row in db.execute(
+            "SELECT resident FROM agent_intents WHERE turn = ? AND result IS NULL", (turn,))}
+        return polling | queued
 
     def resolve(self, db, world):
         turn = world["turn"]
         rows = db.execute("SELECT resident, intent FROM agent_intents WHERE turn = ? AND result IS NULL "
                           "ORDER BY resident", (turn,)).fetchall()
+        actions = [(actor, json.loads(encoded)) for actor, encoded in rows]
+        # Honor offers the buyer saw before processing new offers or departures.
+        order = {"accept_trade": 0, "move": 2, "return_home": 2}
+        actions.sort(key=lambda entry: order.get(entry[1]["action"], 1))
         events = []
-        for actor, encoded in rows:
+        for actor, intent in actions:
             resident = character(world, actor)
-            intent = json.loads(encoded)
             try:
                 validate_intent(intent, world, resident)
             except ValueError as error:
@@ -118,6 +171,9 @@ class AgentTurns:
                     "observation": resident.get("ecology_seen", {}).get(resident["current_site_ip"]),
                 }
             receipt = {"turn": turn, "action": intent["action"], "status": status, **outcome}
-            db.execute("UPDATE agent_intents SET result = ? WHERE resident = ? AND turn = ?",
-                       (encode(receipt), actor, turn))
+            encoded = encode(intent)
+            if intent["action"] == "say":
+                encoded = "sha256:" + digest_token(encoded)
+            db.execute("UPDATE agent_intents SET intent = ?, result = ? WHERE resident = ? AND turn = ?",
+                       (encoded, encode(receipt), actor, turn))
         return events

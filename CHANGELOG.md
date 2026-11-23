@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Features
+- Added connected resident perception, voluntary speech and trade, homeward travel, hunger, and food from habitat discoveries.
+- Limited scripted social and trade actions to residents without an active client that turn.
 - Added Unix agent and server executables for authenticated intents in a shared demo world.
 - Added perception rolls and persistent plant, animal, and geological findings on resident journeys.
 - Added a subnet-restricted, read-only LAN mode for the observer preview.

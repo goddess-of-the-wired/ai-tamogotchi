@@ -14,7 +14,7 @@ def identity(resident):
     return resident["birth"]["id"]
 
 
-def advance_economy(world):
+def advance_economy(world, controlled=()):
     groups = defaultdict(list)
     for resident in world["residents"]:
         groups[resident["current_site_ip"]].append(resident)
@@ -22,13 +22,14 @@ def advance_economy(world):
     day = world["turn"]
     for site, group in groups.items():
         material = RESOURCE_BY_TERRAIN.get(world["map"][site]["terrain"], "stone")
-        for resident in group:
+        fallback = [r for r in group if identity(r) not in controlled]
+        for resident in fallback:
             stock = resident.setdefault("inventory", {})
             # Work alternates with rest and caps personal stock.
             if resident["goal"] != "rest":
                 stock[material] = min(stock.get(material, 0) + 1, 8)
 
-        for buyer, seller in zip(group[::2], group[1::2]):
+        for buyer, seller in zip(fallback[::2], fallback[1::2]):
             hold = buyer["inventory"]
             supply = seller["inventory"]
             surplus = next((kind for kind in sorted(supply)
@@ -54,9 +55,9 @@ def advance_economy(world):
         council = economy["institutions"].get(site)
         if council or not settlement:
             continue
-        occupants = {identity(r) for r in group}
+        occupants = {identity(r) for r in fallback}
         eligible = [
-            r for r in group if r["inventory"].get(material, 0) >= 2
+            r for r in fallback if r["inventory"].get(material, 0) >= 2
             and any(peer in occupants and peer != identity(r) and score >= 2
                     for peer, score in r["relationships"].items())
         ]
