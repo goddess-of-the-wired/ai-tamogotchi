@@ -116,6 +116,7 @@ Each action takes one turn. A character can move one edge toward home with
 | `gather` | Listed resource | |
 | `buy_food` | `null` | |
 | `journal` | Site with an unrecorded observation | |
+| `build` | The local project’s `next_stage` | |
 
 An offer can be accepted on the following turn if both residents are
 co-located and can complete the exchange. Speaking builds familiarity and
@@ -160,3 +161,27 @@ on the next turn, and historical meals remain in the chronicle.
 A context poll or queued intent marks a character as controlled for that turn.
 Otherwise, the scripted social and economic systems can act for them. Existing
 workshop, settlement founding, and research systems still run in the server.
+
+
+### Watch residents build a village
+
+Start a fresh save using the playtest commands above. Everyone starts at
+the God Stone. It serves as a meeting point until residents build there.
+The built-in clients spend most turns gathering, contributing, or returning
+to the project, with some turns reserved for personal desires. With both
+clients running, give them up to 120 turns to reach the village. Follow
+Mira in the timeline to see exactly what she contributed. The observer map
+also shows the site's current stage and the next project's progress.
+
+| Stage | Material units | Different builders needed | Result |
+| --- | ---: | ---: | --- |
+| Bridge shelter | 2 | 1 | A temporary roof. Its builders can call the site home. |
+| Shelter | 4 | 1 | A more permanent home for its builders. |
+| Settlement | 8 | 2 | A recognized settlement with a market and treasury. |
+| Community | 12 | 2 | A persistent membership roster drawn from the builders. |
+| Village | 18 | 2 | The final stage of this playtest, with its community membership carried forward. |
+
+Each successful build turn spends one unit of the terrain's material.
+The God Stone uses fiber. Connected clients can choose other sites to
+build at. The bridge shelter is the prototype’s temporary shelter stage.
+The world has no bridge routing or population growth mechanics yet.

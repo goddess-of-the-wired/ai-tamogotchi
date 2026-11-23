@@ -162,12 +162,13 @@ class AgentConnectionTests(unittest.TestCase):
                 world = glitch.load(db)
                 self.assertEqual(world["residents"][2]["inventory"]["fiber"], 1)
                 self.assertNotIn("hunger", world["residents"][2])
-                submit(listener, 4, "buy_food")
+                with self.assertRaisesRegex(ValueError, "requires a settlement"):
+                    submit(listener, 4, "buy_food")
+                submit(listener, 4, "wait")
                 submit(speaker, 4, "give", listener, item="stone")
                 glitch.step(db, controller=controller)
                 world = glitch.load(db)
                 self.assertEqual(world["residents"][2]["inventory"]["stone"], 1)
-                self.assertEqual(world["residents"][2]["inventory"]["food"], 1)
 
                 site = GATEWAYS[0]
                 submit(listener, 5, "move", site)
@@ -182,7 +183,6 @@ class AgentConnectionTests(unittest.TestCase):
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
                 self.assertEqual(ivo["inventory"]["honey"], 2)
-                self.assertEqual(ivo["inventory"]["food"], 1)
                 submit(listener, 7, "return_home")
                 glitch.step(db, controller=controller)
                 ivo = glitch.load(db)["residents"][2]
@@ -231,6 +231,54 @@ class AgentConnectionTests(unittest.TestCase):
         world["turn"] = 12
         expired = list(advance_desires(world, []))
         self.assertIn("desire.retired", [event.type for event in expired])
+
+    def test_builtin_clients_build_a_village_in_stages(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from runpy import run_path
+
+        import glitch
+        from agent_protocol import AgentTurns, context_view, validate_intent
+        from construction import STAGES, project_view, validate_build
+        from event_store import canonical_history, encode
+        from ip_geography import ORIGIN
+
+        server = run_path(str(ROOT / "glitch-server"))
+        demo_policy = run_path(str(ROOT / "glitch-client"))["demo_policy"]
+        with TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
+            directory = Path(temporary) / "world"
+            server["initialize"](directory, "connected-agents")
+            with closing(sqlite3.connect(directory / "world.sqlite3")) as db:
+                controller = AgentTurns(db)
+                world = glitch.load(db)
+                self.assertIsNone(context_view(world, world["residents"][1])["home"])
+                with self.assertRaisesRegex(ValueError, "Gather"):
+                    validate_build(world, world["residents"][1], "bridge shelter")
+                for turn in range(1, 121):
+                    with db:
+                        for resident in world["residents"][1:]:
+                            intent = {"turn": turn, **demo_policy(context_view(world, resident))}
+                            validate_intent(intent, world, resident)
+                            db.execute("INSERT INTO agent_intents VALUES (?, ?, ?, NULL)",
+                                       (resident["birth"]["id"], turn, encode(intent)))
+                    glitch.step(db, controller=controller)
+                    world = glitch.load(db)
+                    view = project_view(world, ORIGIN)
+                    if turn == 1:
+                        self.assertFalse(world["economy"]["settlements"])
+                    if view["stage"] == "village":
+                        break
+                self.assertEqual(view["stage"], "village")
+                history = canonical_history(db)
+                completed = [event for event in history if event["type"] == "construction.completed"]
+                self.assertEqual([event["effects"]["stage"] for event in completed],
+                                 [stage for stage, _, _ in STAGES])
+                founding = [event for event in history if event["type"] == "settlement.founded"]
+                self.assertEqual([event["turn"] for event in founding], [completed[2]["turn"]])
+                self.assertTrue(all(len(set(event["actor_ids"])) >= 2 for event in completed[2:]))
+                self.assertEqual(world["residents"][1]["home_site"], ORIGIN)
+                self.assertEqual(sum(event["type"] == "construction.contributed" for event in history),
+                                 sum(cost for _, cost, _ in STAGES))
 
     def test_ollama_adapter_requests_json_and_returns_an_intent(self):
         from argparse import Namespace

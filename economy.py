@@ -14,7 +14,7 @@ def identity(resident):
     return resident["birth"]["id"]
 
 
-def advance_economy(world, controlled=()):
+def advance_economy(world, controlled=(), *, resident_built=False):
     groups = defaultdict(list)
     for resident in world["residents"]:
         groups[resident["current_site_ip"]].append(resident)
@@ -45,12 +45,12 @@ def advance_economy(world, controlled=()):
                          "material": surplus, "coins": 1}, site)
 
         settlement = economy["settlements"].get(site)
-        if len(group) >= 2:
-            if settlement is None:
-                settlement = {"founded_day": day, "last_occupied": day, "treasury": {}}
-                economy["settlements"][site] = settlement
-                yield Event("settlement.founded", f"A settlement forms at {site}.",
-                            tuple(map(identity, group)), {"day": day}, site)
+        if settlement is None and len(group) >= 2 and not resident_built:
+            settlement = {"founded_day": day, "last_occupied": day, "treasury": {}}
+            economy["settlements"][site] = settlement
+            yield Event("settlement.founded", f"A settlement forms at {site}.",
+                        tuple(map(identity, group)), {"day": day}, site)
+        if settlement is not None and (resident_built or len(group) >= 2):
             settlement["last_occupied"] = day
         council = economy["institutions"].get(site)
         if council or not settlement:

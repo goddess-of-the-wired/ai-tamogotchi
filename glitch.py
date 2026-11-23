@@ -275,7 +275,7 @@ def advance(world, managed=(), controlled=(), *, resolve=None):
     events.extend(daily_decisions(world, home, controlled=controlled))
     expedition_rng = rng_for(world["seed"], f"expedition:{turn}")
     if "geography" in world:
-        events.extend(advance_economy(world, controlled))
+        events.extend(advance_economy(world, controlled, resident_built=resolve is not None))
         if resolve:
             events.extend(resolve(world))
         events.extend(advance_journeys(world, expedition_rng, managed))

@@ -15,6 +15,7 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import WSGIServer, make_server
 
 import glitch
+from construction import project_view
 from event_store import encode
 from observer import PUBLIC_EVENTS, birth_request, observer_status, verify_birth
 
@@ -182,8 +183,16 @@ class ObserverApp:
                 sites = world["map"]
                 keys = sorted(sites)
                 features = world.get("site_features", {})
-                page = [{**sites[key], "finding": features[key]["label"]} if key in features
-                        else sites[key] for key in keys[offset:offset + PAGE_SIZE]]
+                page = [sites[key].copy() for key in keys[offset:offset + PAGE_SIZE]]
+                projects = world.get("construction", {})
+                for cell in page:
+                    site = cell["id"]
+                    if site in features:
+                        cell["finding"] = features[site]["label"]
+                    if site in projects:
+                        view = project_view(world, site)
+                        cell["construction"] = {key: value for key, value in view.items()
+                                                if key != "builders"}
                 result = {"total": len(keys), "origin": sites.get(origin), "sites": page}
             else:
                 entries = self.public_entries(db, resident, offset)
@@ -200,7 +209,8 @@ class ObserverApp:
         if db.execute("PRAGMA user_version").fetchone()[0] == 0:
             return []
         timeline_events = PUBLIC_EVENTS | {"desire.formed", "desire.progressed", "desire.fulfilled",
-                                           "desire.retired"}
+                                           "desire.retired", "construction.contributed",
+                                           "construction.completed"}
         placeholders = ",".join("?" for _ in timeline_events)
         actor_filter = """AND EXISTS (
             SELECT 1 FROM json_each(e.record, '$.actor_ids') WHERE value = ?

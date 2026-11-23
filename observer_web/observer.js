@@ -92,7 +92,16 @@ async function loadSites(reset) {
     el("inscription").textContent = page.origin.inscription || page.origin.terrain;
   }
   for (const site of page.sites) {
-    appendRow("sites", site.id, site.finding ? site.terrain + " · " + site.finding : site.terrain);
+    const labels = [site.terrain, site.finding];
+    const project = site.construction;
+    if (project) {
+      labels.push(project.stage);
+      if (project.members) labels.push(`${project.members} members`);
+      if (project.next_stage) {
+        labels.push(`Building ${project.next_stage} (${project.contributed}/${project.required})`);
+      }
+    }
+    appendRow("sites", site.id, labels.filter(Boolean).join(" · "));
   }
   siteOffset += page.sites.length;
   el("more-sites").hidden = siteOffset >= page.total;

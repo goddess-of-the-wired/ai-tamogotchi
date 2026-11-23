@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Features
+- Added resident-built homes and five cooperative construction stages through village, visible on the observer map and timeline.
 - Added evolving, trait-weighted immediate and long-term desires, with progress explained in the observer timeline.
 - Added resident journals and retired the connected demo’s hunger mechanic.
 - Added connected resident perception, voluntary speech and trade, homeward travel, hunger, and food from habitat discoveries.

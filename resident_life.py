@@ -16,7 +16,7 @@ FEATURE_FOOD = {
 
 
 def home_step(resident):
-    return known_step(resident, resident["birth"]["site_id"])
+    return known_step(resident, resident.get("home_site", resident["birth"]["site_id"]))
 
 
 def known_step(resident, destination):
